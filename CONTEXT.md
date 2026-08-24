@@ -105,3 +105,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Rebound Crate**: the Comeback Key's crate — the standard award pool, a defuse timer that starts at the cap, and a guaranteed near-miss.
 - **Mom Weather™**: chat rain that pays 1 BB, falling only on players who haven't deposited in six hours. Recent depositors get an umbrella.
 - **Self-Limit Settings**: responsible-gaming controls that all work perfectly and limit nothing, because their units never match the money.
+- **The House Band™**: the site's single audio engine — every sound is one band on one board, synthesized in the player's browser, and it never stops for long.
+- **Comfort mix**: the house's mixing doctrine — losses are lullabied, wins are air-raided; celebration volume scales with estimated value, never net.
+- **Mood soundtrack**: the ambience loop tied to the mood word; it discloses the adjective, never the multiplier.
+- **The Siren**: the site's one (1) jackpot fanfare, shared by every surface; classified as safety equipment and therefore un-muteable.
+- **Courtesy volume**: the 50% at which un-muteable house sounds play while muted; courtesy is 50%.
+- **One (1) trumpet**: the character win's modest fanfare — a single instrument, once per session; it builds character.
+- **Fridge hold**: the deposit flow's hold music — a kitchen-appliance hum; the best-engineered loop on the site.
+- **3dB hot**: mixed louder than it should be because someone asked; the owner is always 3dB hot, 4 in Desperation Mode.
