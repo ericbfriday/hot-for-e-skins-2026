@@ -11,6 +11,7 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Conversion fees**: the itemized shavings on every OC→BB conversion: Mood Stabilization Fee, Conversion Processing Fee, Maternal Gratuity, and §8.9 rounding (always down).
 - **Maternal Starter Grant**: the BB-only opening grant of a new session; carries no OC by design — the first OC must come through the Ask-Mom flow.
 - **Refill package**: one of the four fake-USD bundles of OC offered in the Ask-Mom deposit flow (Lunch Money Special → Mom's Max).
+- **Bonus OC**: refill-bundle OC that can never be converted and expires unconverted at the next mood change (ToS §2.3). It is survived by nothing.
 - **Derived denominations**: USD, V-Gems, and SkinCoinz — display-only conversions of the BB balance at fixed ratios, never separately held. The USD chip is the cash-out mirage: permanently estimated at $0.00.
 - **Fake win**: an award of inventory or credit that cannot be withdrawn.
 - **Pending withdrawal**: the permanent state of every withdrawal attempt (ToS §1.3).
@@ -35,7 +36,13 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Rollback Event**: the scheduled "market event" that re-steals the best item, leaving a Market Event Receipt (est. $0.00).
 - **HFES-10**: the market index rendered from the running maximum; it has never gone down.
 - **Portfolio value**: the monotonic estimated total of held items; realized losses are not counted, and Cash Value (est.) stays $0.00.
-- **Ask-Mom deposit flow**: the theatrical refill flow triggered when credits run low; Mom's credit card is the fictional funding source.
+- **Ask-Mom deposit flow**: the theatrical refill flow triggered when credits run low; Mom's credit card is the fictional funding source. The most polished surface on the site — the rail feels real, and the feeling is the product.
+- **The asking ceremony**: the multi-step theater between the Ask-Mom click and the card form: Asking Mom, "ask your father", back to Mom.
+- **Mom-adjacent minor**: the certified deposit-eligible state, produced by failing Are You Mom? verification (ToS §3.3).
+- **The wrong Visa**: Dad's card — also a Visa, never an authorized funding instrument (ToS §3.1).
+- **The school checkbox**: the pre-checked "Tell Mom it's for school" misrepresentation that un-declines Mom's card; the only path to a successful retry.
+- **One-Click escalation**: each completed deposit permanently shortens the next, ending at a buy button that commits on hover.
+- **Deposit match**: the permanently expiring, never-claimable match offer whose countdown resets the moment it would reach zero.
 - **Gamertag**: the generated anonymous session identity, persisted locally and featured in the ticker and chat.
 - **Compliance Filter**: the house's name-mangling layer for custom usernames — mood-based leetification plus enforced digits; non-refundable.
 - **Reserved cast**: the scripted personas (owner MOMCODE_MIKE, mod, trade bot, VIP host Mom) who people the ticker and chat; never assigned to real players.
