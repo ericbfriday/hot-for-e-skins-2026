@@ -14,6 +14,15 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Derived denominations**: USD, V-Gems, and SkinCoinz — display-only conversions of the BB balance at fixed ratios, never separately held. The USD chip is the cash-out mirage: permanently estimated at $0.00.
 - **Fake win**: an award of inventory or credit that cannot be withdrawn.
 - **Pending withdrawal**: the permanent state of every withdrawal attempt (ToS §1.3).
+- **Reenactment**: any animation whose outcome was decided before it began; the reels are theater, honestly disclosed in fine print (ToS §4.2).
+- **Near-miss choreography**: the rehearsed landing one slot off a jackpot; cosmetic by design.
+- **Welcome win**: the rigged first-spin win of a session — everyone wins their first one; it's in the brochure.
+- **Provably Fair™**: the trust badge whose verification honestly reveals HOUSE WINS — the fairness is provable, the proving is pending.
+- **Chase It™**: the double-cost re-spin offered immediately after a loss.
+- **Spin receipt**: the itemization of a flat game price into invented fees; the itemization is the joke, never the price.
+- **Rakeback Vault**: the per-loss accrual displayed proudly and claimable never.
+- **Pity Prize**: the loss-streak consolation award; losing consistently is rewarded consistently.
+- **Mom Coupon™**: a free-spin coupon redeemable only on Generous mood days.
 - **Ask-Mom deposit flow**: the theatrical refill flow triggered when credits run low; Mom's credit card is the fictional funding source.
 - **Gamertag**: the generated anonymous session identity, persisted locally and featured in the ticker and chat.
 - **Compliance Filter**: the house's name-mangling layer for custom usernames — mood-based leetification plus enforced digits; non-refundable.
