@@ -1,19 +1,23 @@
 import React from 'react'
 import { Mood } from "./spine/mood.js";
 import { Bus, EVENTS, Regime } from "./spine/bus.js";
-import "./spine/vault.js";
-import "./spine/band.js";
+import { Vault } from "./spine/vault.js";
+import { HouseBand, BAND_PRIORITIES } from "./spine/band.js";
 import { Identity, generateTag, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
 import { Consent } from "./spine/consent.js";
 import AskMomFlow from "./askmom/AskMomFlow.jsx";
 import {
-  loadOC, saveOC, loadBonus, saveBonus, clearBonus, loadDepositStats,
+  loadOC, saveOC, loadBonus, saveBonus, clearBonus, loadDepositStats, noteChaseAttempt,
 } from "./askmom/session.js";
 import {
   GAME_PRICES_BB, MATERNAL_STARTER_GRANT_BB, DESPERATION_THRESHOLD_BB,
   V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE, REFILL_PACKAGES,
   NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY
 } from "./spine/constants.js";
+import { Inventory } from "./games/inventory.js";
+import { pseudoHash12 } from "./games/fairness.js";
+import * as Roulette from "./games/roulette.js";
+import * as Coinflip from "./games/coinflip.js";
 
 const PKG_NAME = Object.fromEntries(REFILL_PACKAGES.map((p) => [p.id, p.name]));
 
@@ -187,13 +191,25 @@ class App extends React.Component {
     balanceOC:0, bonusOC:null, askmom:null, toasts:[], ocFly:null, cooldown:null, streakChip:null, abandonedCount:0,
     ticker:[], chat:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
+    rouletteInsured:true, rouletteTurbo:false, rouletteTurboUnlocked:false,
+    rouletteStreak:0, rouletteNearMissBackToBack:false, rouletteConsolationMsg:null,
+    rouletteReceipt:null, rouletteReceiptOpen:false,
+    rouletteFairness:null, rouletteFairnessOpen:false,
+    rouletteJackpotBox:null, rouletteBannerNames:[],
     coinFlipping:false, coinResult:null,
+    coinEdgeCount:0, coinStreak:0, coinLastCall:null, coinCallCounts:{MOM:0,"§8.9":0},
+    coinBotPityUsed:false, coinDoN:null, coinPhotoBackToBack:false,
+    coinReceipt:null, coinReceiptOpen:false, coinFairness:null, coinFairnessOpen:false,
+    coinStashItem:null,
     crashRunning:false, crashMult:1.00, crashCrashed:false, crashResult:null, cashoutDodge:0,
     crateKeyBought:false, crateOpening:false, crateProgress:0, crateResult:null
   };
 
   _tosScrollRef = React.createRef();
   _art8Ref = React.createRef();
+  _rouletteWelcomeUsed = false;
+  _rouletteLastNearMissId = null;
+  _coinWelcomeUsed = false;
 
   componentDidMount() {
     let balance = MATERNAL_STARTER_GRANT_BB;
@@ -241,6 +257,8 @@ class App extends React.Component {
       tosAcceptedEver, tosNeedsConsent:!tosAcceptedEver,
       ident:Identity.get(), stats:Identity.getStats(),
       balanceOC:oc, bonusOC:bonus, streakChip: loadDepositStats().streak,
+      rouletteTurboUnlocked: loadDepositStats().ever,
+      coinStashItem: Coinflip.pickStashItem(),
     });
     this.saveBalance(balance);
     if (welcomeToast) this.toast(welcomeToast);
@@ -262,6 +280,7 @@ class App extends React.Component {
       if (p.firstEver) {
         this.pushTicker("MOMCODE_MIKE [OWNER] just 47x'd Mom's Visa — you're next (code MOM)");
         this.toast("Turbo Spin unlocked. It never re-locks. Premium is a scar.");
+        this.setState({rouletteTurboUnlocked:true});
       }
       if (p.packageId === "moms-max") {
         this.pushTicker("Mom's Max purchased by You. This is the last time (§10.3).");
@@ -324,6 +343,7 @@ class App extends React.Component {
     clearTimeout(this._tTimer); clearTimeout(this._cTimer);
     clearInterval(this._crashInt); clearInterval(this._crateInt);
     clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
+    clearTimeout(this._rouletteSpinTimer); clearTimeout(this._coinFlipTimer);
     clearTimeout(this._ocFlyTimer); clearTimeout(this._creditReplayTimer);
     clearTimeout(this._tosDwellT); clearInterval(this._tosTick);
     if (this._offMood) this._offMood();
@@ -489,40 +509,261 @@ class App extends React.Component {
   spendBB(surface){ return this.payBB(GAME_PRICES_BB[surface], surface); }
 
   nextRoundId(){ this._roundSeq = (this._roundSeq||0)+1; return this._roundSeq; }
-  settleRound(surface, roundId, kind){
-    Bus.emit(EVENTS.ROUND_SETTLED, {surface, roundId, wagered:true, priceBB:GAME_PRICES_BB[surface], netBB:-GAME_PRICES_BB[surface], kind});
+  settleRound(surface, roundId, kind, extra={}){
+    const priceBB = typeof extra.priceBB === "number" ? extra.priceBB : GAME_PRICES_BB[surface];
+    const netBB = typeof extra.netBB === "number" ? extra.netBB : -GAME_PRICES_BB[surface];
+    const wagered = extra.wagered !== false;
+    Bus.emit(EVENTS.ROUND_SETTLED, {
+      surface, roundId, wagered, priceBB, netBB, kind,
+      itemAward: extra.itemAward || null,
+      nearMissItem: extra.nearMissItem || null,
+      streakAfter: { site: (this.state.stats && this.state.stats.lossStreak) || 0, surface: extra.surfaceStreak || 0 },
+    });
+  }
+  playerTagOrYou(){
+    const s = this.state;
+    return s.ident ? (s.ident.custom || s.ident.tag) : "You";
   }
 
   setTab(tab){ this.setState({activeTab:tab}); }
 
+  toggleRouletteInsured(){ this.setState(s=>({rouletteInsured:!s.rouletteInsured})); }
+  toggleRouletteTurbo(){
+    if (!this.state.rouletteTurboUnlocked) return;
+    this.setState(s=>({rouletteTurbo:!s.rouletteTurbo}));
+  }
+  toggleRouletteReceipt(){ this.setState(s=>({rouletteReceiptOpen:!s.rouletteReceiptOpen})); }
+  toggleCoinReceipt(){ this.setState(s=>({coinReceiptOpen:!s.coinReceiptOpen})); }
+  openRouletteFairness(){
+    const f = this.state.rouletteFairness;
+    if (!f) return;
+    this.setState({rouletteFairness:{...f, revealed:true}, rouletteFairnessOpen:true});
+  }
+  closeRouletteFairness(){ this.setState({rouletteFairnessOpen:false}); }
+  openCoinFairness(){
+    const f = this.state.coinFairness;
+    if (!f) return;
+    this.setState({coinFairness:{...f, revealed:true}, coinFairnessOpen:true});
+  }
+  closeCoinFairness(){ this.setState({coinFairnessOpen:false}); }
+
   playRoulette(){
     if (this.state.rouletteSpinning) return;
-    if (!this.spendBB("roulette")) return;
+    const turbo = this.state.rouletteTurboUnlocked && this.state.rouletteTurbo;
+    const insured = this.state.rouletteInsured;
+    const price = Roulette.SPIN_PRICE_BB + (turbo?Roulette.TURBO_FEE_BB:0) + (insured?Roulette.INSURANCE_FEE_BB:0);
+    if (!this.payBB(price, "roulette")) return;
     const roundId = this.nextRoundId();
-    Bus.emit(EVENTS.ROUND_STARTED, {surface:"roulette", roundId, priceBB:GAME_PRICES_BB.roulette, wagered:true});
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"roulette", roundId, priceBB:price, wagered:true});
+    HouseBand.play("roulette.spin", {priority:BAND_PRIORITIES.P2_GAME});
+    const duration = turbo ? 2500 : 5000;
     const finalOffset = -(2800 + Math.floor(Math.random()*300));
-    this.setState({rouletteSpinning:true, rouletteResult:null, rouletteOffset:0, rouletteTransition:"none"});
+    this.setState({rouletteSpinning:true, rouletteResult:null, rouletteOffset:0, rouletteTransition:"none", rouletteJackpotBox:null, rouletteConsolationMsg:null});
     requestAnimationFrame(()=>{
-      this.setState({rouletteOffset:finalOffset, rouletteTransition:"transform 5s cubic-bezier(0.12,0.7,0.25,1)"});
+      this.setState({rouletteOffset:finalOffset, rouletteTransition:`transform ${duration}ms cubic-bezier(0.12,0.7,0.25,1)`});
     });
-    setTimeout(()=>{
-      this.setState({rouletteSpinning:false, rouletteResult:"HOUSE WINS: FEE ASSESSED. Better luck never."});
-      this.settleRound("roulette", roundId, "house-win");
-      this.setState(s=>({ticker:["You lost "+GAME_PRICES_BB.roulette+" BB to the house (shocking)", ...s.ticker].slice(0,8)}));
-    }, 5300);
+    this._rouletteSpinTimer = setTimeout(()=>this.resolveRouletteSpin(roundId, price, turbo, insured), duration + 300);
   }
+  resolveRouletteSpin(roundId, price, turbo, insured){
+    const welcome = !this._rouletteWelcomeUsed;
+    this._rouletteWelcomeUsed = true;
+    const kind = welcome ? "junk-win" : Roulette.rollOutcome();
+    const tag = this.playerTagOrYou();
+    let netBB = -price;
+    let itemAward = null, nearMissItem = null, resultText = "", item = null;
 
-  playCoinflip(){
+    if (kind === "near-miss") {
+      item = Roulette.pickNearMissJackpot();
+      this._rouletteLastNearMissId = item.id;
+      resultText = Roulette.nearMissToast(item, this.state.rouletteNearMissBackToBack);
+      nearMissItem = item.name;
+    } else if (kind === "junk-win") {
+      item = welcome ? Roulette.JUNK_ITEMS[0] : Roulette.pickJunkItem();
+      const entry = Inventory.award({...item, source:"roulette"});
+      itemAward = entry.name;
+      resultText = welcome
+        ? "Everyone wins their first one. It's in the brochure."
+        : "JUNK WIN: "+item.name+" (est. "+item.value+") is yours. Withdrawal pending.";
+    } else if (kind === "nibble") {
+      netBB = -(price - 2);
+      resultText = "Refund nibble: 2 BB Rakeback credited. Net: still down.";
+    } else if (kind === "jackpot") {
+      item = Roulette.pickJackpotItem(this._rouletteLastNearMissId);
+      const entry = Inventory.award({...item, source:"roulette"});
+      itemAward = entry.name;
+      resultText = "JACKPOT! "+item.name+" (est. "+item.value+") is yours!";
+      HouseBand.play("roulette.jackpot", {priority:BAND_PRIORITIES.P1_CEREMONY});
+      this.fireConfetti();
+    } else {
+      resultText = "HOUSE WINS: FEE ASSESSED. Better luck never.";
+    }
+
+    let streak = this.state.rouletteStreak;
+    let consolation = null;
+    if (kind === "junk-win" || kind === "jackpot") {
+      streak = 0; // fake win resets the ladder ("counts as a win for morale purposes only")
+    } else {
+      streak += 1;
+      consolation = Roulette.consolationForStreak(streak, this.state.moodWord);
+    }
+    const nearMissBackToBack = kind === "near-miss" ? !this.state.rouletteNearMissBackToBack : false;
+
+    const fairnessAnyway = kind === "junk-win" || kind === "jackpot";
+    const preimage = "ALLOWANCE_ROULETTE_#"+roundId+"_HOUSE_WINS"+(fairnessAnyway?"_ANYWAY":"");
+    const commitment = pseudoHash12("ALLOWANCE_ROULETTE_"+roundId+"_HOUSE_WINS"+(fairnessAnyway?"_ANYWAY":""));
+
+    this.setState(s=>({
+      rouletteSpinning:false, rouletteResult:resultText,
+      rouletteStreak:streak, rouletteNearMissBackToBack:nearMissBackToBack,
+      rouletteConsolationMsg: consolation ? consolation.banner : null,
+      rouletteReceipt: Roulette.receiptFor({turbo, insured}),
+      rouletteReceiptOpen:false,
+      rouletteFairness: {roundId, commitment, preimage, revealed:false, anyway:fairnessAnyway},
+      rouletteFairnessOpen:false,
+      rouletteJackpotBox: kind==="jackpot" ? {item, cashoutClicked:false} : null,
+      rouletteBannerNames: itemAward && !s.rouletteBannerNames.includes(tag) ? [tag, ...s.rouletteBannerNames].slice(0,7) : s.rouletteBannerNames,
+    }));
+
+    this.settleRound("roulette", roundId, kind, {priceBB:price, netBB, itemAward, nearMissItem, surfaceStreak:streak});
+    const tLine = Roulette.tickerLineForOutcome(kind, tag, item);
+    if (tLine) this.pushTicker(tLine);
+    if (consolation) {
+      if (consolation.kind === "badge") this.pushTicker(tag+" earned the Consistent! badge (losses: 7)");
+      if (consolation.kind === "apology") this.pushTicker(tag+" received a formal apology (fee: 1 BB)");
+      if (consolation.awardBB) this.creditBB(consolation.awardBB);
+      if (consolation.awardItem) Inventory.award({...consolation.awardItem, source:"roulette-consolation"});
+    }
+  }
+  chaseIt(){
+    if (this.state.rouletteSpinning) return;
+    const before = this.state.balanceBB;
+    if (before < Roulette.CHASE_IT_PRICE_BB) {
+      const n = this.state.sessionSpendFailures + 1;
+      this.setState({sessionSpendFailures:n});
+      this.flashInsufficient(n);
+      Bus.emit(EVENTS.SPEND_FAILED, {surface:"roulette-chase-it", costBB:Roulette.CHASE_IT_PRICE_BB, sessionFailures:n});
+      noteChaseAttempt();
+      return;
+    }
+    if (!this.payBB(Roulette.CHASE_IT_PRICE_BB, "roulette")) return;
+    const roundId = this.nextRoundId();
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"roulette", roundId, priceBB:Roulette.CHASE_IT_PRICE_BB, wagered:true});
+    this.setState({rouletteSpinning:true, rouletteResult:null, rouletteJackpotBox:null});
+    this._rouletteSpinTimer = setTimeout(()=>this.resolveRouletteSpin(roundId, Roulette.CHASE_IT_PRICE_BB, false, false), 2600);
+  }
+  rouletteCashOut(){
+    this.setState(s=>({rouletteJackpotBox: s.rouletteJackpotBox ? {...s.rouletteJackpotBox, cashoutClicked:true} : null}));
+    Bus.emit(EVENTS.WITHDRAWAL_CREATED, {usdEst: 0});
+  }
+  rouletteKeepSpinning(){ this.setState({rouletteJackpotBox:null}); }
+
+  playCoinflip(call){
     if (this.state.coinFlipping) return;
     if (!this.spendBB("coinflip")) return;
     const roundId = this.nextRoundId();
     Bus.emit(EVENTS.ROUND_STARTED, {surface:"coinflip", roundId, priceBB:GAME_PRICES_BB.coinflip, wagered:true});
-    this.setState({coinFlipping:true, coinResult:null});
-    setTimeout(()=>{
-      this.setState({coinFlipping:false, coinResult:"The coin landed on its edge. Tie goes to the server host."});
-      this.settleRound("coinflip", roundId, "edge");
-      this.setState(s=>({ticker:["AdminTradeBot_69 collects the edge-case bounty", ...s.ticker].slice(0,8)}));
-    }, 2000);
+    HouseBand.play("coinflip.flip", {priority:BAND_PRIORITIES.P2_GAME});
+    const chosenCall = call || this.state.coinLastCall || "MOM";
+    this.setState(s=>({
+      coinFlipping:true, coinResult:null, coinLastCall:chosenCall,
+      coinCallCounts:{...s.coinCallCounts, [chosenCall]:(s.coinCallCounts[chosenCall]||0)+1},
+    }));
+    this._coinFlipTimer = setTimeout(()=>this.resolveCoinflip(roundId, 0), 2800);
+  }
+  resolveCoinflip(roundId, extraBB){
+    const price = Coinflip.FLIP_PRICE_BB + (extraBB||0);
+    const welcome = !this._coinWelcomeUsed;
+    this._coinWelcomeUsed = true;
+    const kind = welcome ? "junk-win" : Coinflip.rollOutcome();
+    const tag = this.playerTagOrYou();
+    let netBB = -price;
+    let itemAward = null, resultText = "", item = null;
+    let edgeCount = this.state.coinEdgeCount;
+    let photoBackToBack = false;
+
+    if (kind === "edge") {
+      edgeCount += 1;
+      resultText = Coinflip.edgeLadderLine(edgeCount);
+    } else if (kind === "photo-finish") {
+      photoBackToBack = !this.state.coinPhotoBackToBack;
+      resultText = photoBackToBack
+        ? Coinflip.photoFinishBackToBackLine()
+        : Coinflip.PHOTO_FINISH_LINE.replace("{call}", this.state.coinLastCall || "your call");
+    } else if (kind === "junk-win") {
+      item = welcome ? (this.state.coinStashItem || Coinflip.pickStashItem()) : (this.state.coinStashItem || Coinflip.pickStashItem());
+      const entry = Inventory.award({...item, source:"coinflip"});
+      itemAward = entry.name;
+      resultText = welcome
+        ? "Your first one? He lets those go. (One (1) per session, per tradition. §5.4(b).)"
+        : "Admin_TradeBot_69 hands over "+item.name+" (est. "+item.value+"). Withdrawal pending.";
+    } else if (kind === "nibble") {
+      netBB = 0;
+      resultText = "You broke even. This is the best available outcome (§5.3).";
+    } else if (kind === "legendary-win") {
+      item = Coinflip.pickLegendary();
+      const entry = Inventory.award({...item, source:"coinflip"});
+      itemAward = entry.name;
+      resultText = "MOD_Chad_Official reviewed the flip. Ruling: yours. Bot is grounded. You WON "+item.name+" (est. "+item.value+")!";
+      HouseBand.play("coinflip.legendary", {priority:BAND_PRIORITIES.P1_CEREMONY});
+      this.fireConfetti();
+    } else {
+      resultText = "The coin landed opposite your call. AdminTradeBot_69 collects.";
+    }
+
+    let streak = this.state.coinStreak;
+    let botPity = false;
+    if (kind === "junk-win" || kind === "legendary-win" || kind === "nibble") {
+      streak = 0;
+    } else {
+      streak += 1;
+      if (streak >= 7 && !this.state.coinBotPityUsed) botPity = true;
+    }
+    const taunt = Coinflip.streakTaunt(streak, tag);
+
+    const fairnessAnyway = kind === "junk-win" || kind === "legendary-win";
+    const preimage = "SKIN_COINFLIP_#"+roundId+"_"+(fairnessAnyway?"HOST_ALLOWS_THIS_ONE":"TIE_GOES_TO_HOST");
+    const commitment = pseudoHash12("SKIN_COINFLIP_"+roundId+"_TIE_GOES_TO_HOST");
+
+    this.setState(s=>({
+      coinFlipping:false, coinResult:resultText,
+      coinStreak:streak, coinEdgeCount:edgeCount, coinPhotoBackToBack:photoBackToBack,
+      coinReceipt:Coinflip.receiptFor(), coinReceiptOpen:false,
+      coinFairness:{roundId, commitment, preimage, revealed:false, anyway:fairnessAnyway},
+      coinFairnessOpen:false,
+      coinBotPityUsed: s.coinBotPityUsed || botPity,
+      coinDoN: itemAward ? {item, awaitingChoice:true} : null,
+      coinStashItem: Coinflip.pickStashItem(),
+    }));
+
+    this.settleRound("coinflip", roundId, kind, {priceBB:price, netBB, itemAward, surfaceStreak:streak});
+    const tLine = Coinflip.tickerLineForOutcome(kind, tag, item);
+    if (tLine) this.pushTicker(tLine);
+    if (taunt) this.setState(s=>({chat:[{user:"Admin_TradeBot_69", msg:taunt.replace("Admin_TradeBot_69: ",""), color:"#e24a4a"}, ...s.chat].slice(0,6)}));
+    if (botPity) {
+      this.creditBB(1);
+      this.pushTicker(tag+" received 1 BB from the bot's personal wallet (the house was not consulted (it was))");
+      this.toast("Admin_TradeBot_69 felt something. Here's 1 BB. Don't tell the house.");
+    }
+  }
+  coinflipRematch(){ this.playCoinflip(this.state.coinLastCall); }
+  coinDoubleOrNothingAccept(){
+    const don = this.state.coinDoN;
+    if (!don) return;
+    this.setState({coinDoN:null});
+    const win = Math.random() < 0.5;
+    if (win) {
+      const doubled = {...don.item, value: don.item.value};
+      Inventory.award({...doubled, source:"coinflip-double"});
+      this.toast("Value doubled: same item, bigger number (§8.9)");
+      this.pushTicker(this.playerTagOrYou()+" doubled their "+don.item.name+" (same item, bigger number)");
+    } else {
+      this.toast("The Nothing was load-bearing.");
+      this.pushTicker("The Nothing claimed "+this.playerTagOrYou()+"'s "+don.item.name+" (it was load-bearing)");
+    }
+  }
+  coinDoubleOrNothingDecline(){
+    this.setState({coinDoN:null});
+    this.setState(s=>({chat:[{user:"Admin_TradeBot_69", msg:this.playerTagOrYou()+": coward. (respected.)", color:"#e24a4a"}, ...s.chat].slice(0,6)}));
   }
 
   startCrash(){
@@ -744,10 +985,30 @@ class App extends React.Component {
       setTab_crash:()=>this.setTab("crash"), setTab_crates:()=>this.setTab("crates"),
       rouletteStrip:ROULETTE_STRIP, rouletteOffset:s.rouletteOffset, rouletteTransition:s.rouletteTransition,
       rouletteSpinning:s.rouletteSpinning, rouletteResult:s.rouletteResult, playRoulette:()=>this.playRoulette(),
-      rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : ("Spin ("+GAME_PRICES_BB.roulette+" BB)"),
-      coinFlipping:s.coinFlipping, coinResult:s.coinResult, playCoinflip:()=>this.playCoinflip(),
-      coinBtnLabel: s.coinFlipping ? "Flipping..." : ("Flip ("+GAME_PRICES_BB.coinflip+" BB)"),
+      rouletteSpinPrice: Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0),
+      rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : ("SPIN AGAIN — "+(Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0))+" BB"),
+      rouletteSpinsLeft: Math.floor(bb / Roulette.SPIN_PRICE_BB),
+      rouletteInsured:s.rouletteInsured, toggleRouletteInsured:()=>this.toggleRouletteInsured(),
+      rouletteTurboUnlocked:s.rouletteTurboUnlocked, rouletteTurbo:s.rouletteTurbo, toggleRouletteTurbo:()=>this.toggleRouletteTurbo(),
+      rouletteConsolationMsg:s.rouletteConsolationMsg,
+      rouletteReceipt:s.rouletteReceipt, rouletteReceiptOpen:s.rouletteReceiptOpen, toggleRouletteReceipt:()=>this.toggleRouletteReceipt(),
+      rouletteFairness:s.rouletteFairness, rouletteFairnessOpen:s.rouletteFairnessOpen,
+      openRouletteFairness:()=>this.openRouletteFairness(), closeRouletteFairness:()=>this.closeRouletteFairness(),
+      rouletteJackpotBox:s.rouletteJackpotBox, rouletteCashOut:()=>this.rouletteCashOut(), rouletteKeepSpinning:()=>this.rouletteKeepSpinning(),
+      rouletteBannerNames: s.rouletteBannerNames.length ? s.rouletteBannerNames : ["definitely_not_a_bot","MomApproved88","xX_QuickScope_Xx","yeetmaster3000","NotABot_Trust","TotallyRealUser42","GrandmasCreditCard"],
+      rouletteVault: Vault.get(), rouletteVaultLine: Vault.receiptLine(),
+      chaseIt:()=>this.chaseIt(), showChaseIt: !!s.rouletteResult && !s.rouletteSpinning && s.rouletteStreak >= 1, chaseItPrice: Roulette.CHASE_IT_PRICE_BB,
+      coinFlipping:s.coinFlipping, coinResult:s.coinResult,
+      playCoinflipMom:()=>this.playCoinflip("MOM"), playCoinflipS89:()=>this.playCoinflip("§8.9"),
+      coinBtnLabel: s.coinFlipping ? "Flipping..." : ("FLIP AGAIN — "+Coinflip.FLIP_PRICE_BB+" BB"),
       coinAnim: s.coinFlipping ? "coinFlip 2s ease-in-out" : "none",
+      coinLastCall:s.coinLastCall, coinCallCounts:s.coinCallCounts,
+      coinStashItem:s.coinStashItem, coinEdgeCount:s.coinEdgeCount, coinStreak:s.coinStreak,
+      coinReceipt:s.coinReceipt, coinReceiptOpen:s.coinReceiptOpen, toggleCoinReceipt:()=>this.toggleCoinReceipt(),
+      coinFairness:s.coinFairness, coinFairnessOpen:s.coinFairnessOpen,
+      openCoinFairness:()=>this.openCoinFairness(), closeCoinFairness:()=>this.closeCoinFairness(),
+      coinDoN:s.coinDoN, coinDoubleOrNothingAccept:()=>this.coinDoubleOrNothingAccept(), coinDoubleOrNothingDecline:()=>this.coinDoubleOrNothingDecline(),
+      coinflipRematch:()=>this.coinflipRematch(), showRematch: !!s.coinResult && !s.coinFlipping && s.coinStreak >= 1,
       crashRunning:s.crashRunning, crashResult:s.crashResult, startCrash:()=>this.startCrash(),
       crashStartLabel: s.crashRunning ? "Running..." : ("Start Run ("+GAME_PRICES_BB.crash+" BB)"),
       crashMultDisplay: s.crashMult.toFixed(2)+"x",
@@ -1076,7 +1337,11 @@ class App extends React.Component {
 
                 {v.isRoulette && (
                   <div>
-                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"14px"}}>Allowance Roulette</div>
+                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Allowance Roulette <span style={{fontSize:"11px",color:"#ffcf9a",fontFamily:"inherit"}}>PROVABLY FAIR™</span></div>
+                    <div style={{background:"#3a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"6px 10px",marginBottom:"10px",fontSize:"11px",color:"#ffcf9a",fontWeight:700}}>
+                      🔥 {v.rouletteBannerNames[0]} won big* — Last 7 spinners won big*
+                      <div style={{fontSize:"8px",opacity:0.4,fontWeight:400,marginTop:"2px"}}>* "won big" measured in estimated value, not withdrawable value. Withdrawable value of all winnings is $0.00 (see ToS §1.3).</div>
+                    </div>
                     <div style={{position:"relative",overflow:"hidden",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",height:"120px"}}>
                       <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:"3px",background:"#ffe9d6",zIndex:5,boxShadow:"0 0 10px #ffe9d6"}}></div>
                       <div style={{display:"flex",gap:"8px",padding:"10px 0",transform:`translateX(${v.rouletteOffset}px)`,transition:v.rouletteTransition}}>
@@ -1090,41 +1355,149 @@ class App extends React.Component {
                         ))}
                       </div>
                     </div>
+                    <div style={{fontSize:"8px",color:"#7a5a4a",marginTop:"4px"}}>reel recalibrating for accuracy · Near-misses are cosmetic. The reel is a reenactment (ToS §4.2).</div>
+                    <div style={{fontSize:"11px",color:"#a9705a",margin:"8px 0"}}>Spins left: {v.rouletteSpinsLeft}{v.rouletteSpinsLeft<=3 ? " (other kids are already spinning)" : " (make them count)"}</div>
+
                     {v.rouletteResult && (
-                      <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.rouletteResult}</div>
+                      <div style={{marginTop:"6px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.rouletteResult}</div>
+                    )}
+                    {v.rouletteConsolationMsg && (
+                      <div style={{marginTop:"8px",background:"#1a3a0a",border:"1px solid #8fd97a",borderRadius:"6px",padding:"8px 12px",color:"#c9f2b0",fontWeight:700,fontSize:"12px"}}>{v.rouletteConsolationMsg}</div>
+                    )}
+                    {v.rouletteJackpotBox && (
+                      <div style={{marginTop:"10px",background:"#3a2a05",border:"2px solid #ffd54a",borderRadius:"8px",padding:"12px",textAlign:"center"}}>
+                        <div style={{fontFamily:"'Bangers',cursive",color:"#ffd54a",fontSize:"16px",marginBottom:"8px"}}>JACKPOT! {v.rouletteJackpotBox.item.name} (est. {v.rouletteJackpotBox.item.value}) is yours!</div>
+                        {!v.rouletteJackpotBox.cashoutClicked ? (
+                          <div style={{display:"flex",gap:"8px",justifyContent:"center"}}>
+                            <button onClick={v.rouletteCashOut} style={{background:"#3a2010",border:"1px dashed #ff5a14",color:"#ffcf9a",fontWeight:700,fontSize:"12px",padding:"9px 16px",borderRadius:"7px",cursor:"pointer"}}>Cash Out</button>
+                            <button onClick={v.rouletteKeepSpinning} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"7px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Keep Spinning (recommended)</button>
+                          </div>
+                        ) : (
+                          <div style={{fontSize:"11px",color:"#e8c9ac"}}>Withdrawal request received. Status: Pending (ToS §1.3). Estimated processing: eventually.</div>
+                        )}
+                      </div>
                     )}
                     {v.replayRoulette && (
                       <button onClick={v.topUpAndPlayRoulette} style={{marginTop:"10px",background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
                     )}
-                    <button onClick={v.playRoulette} disabled={v.rouletteSpinning} style={{marginTop:"16px",background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.rouletteBtnLabel}</button>
+                    {v.showChaseIt && (
+                      <button onClick={v.chaseIt} disabled={v.rouletteSpinning} style={{marginTop:"10px",marginRight:"10px",background:"linear-gradient(180deg,#e24a4a,#a82a2a)",border:"2px solid #ffcfcf",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"10px 16px",borderRadius:"8px",cursor:"pointer"}}>Chase It™ — {v.chaseItPrice} BB</button>
+                    )}
+                    <div style={{display:"flex",alignItems:"center",gap:"14px",marginTop:"10px",flexWrap:"wrap"}}>
+                      <label style={{fontSize:"10px",color:"#e8c9ac",display:"flex",alignItems:"center",gap:"5px",cursor:"pointer"}}>
+                        <input type="checkbox" checked={v.rouletteInsured} onChange={v.toggleRouletteInsured} /> Lucky Spin Insurance (+1 BB) — covers emotional outcomes
+                      </label>
+                      <label style={{fontSize:"10px",color: v.rouletteTurboUnlocked ? "#e8c9ac" : "#5a4a3a",display:"flex",alignItems:"center",gap:"5px",cursor: v.rouletteTurboUnlocked ? "pointer" : "not-allowed"}}>
+                        <input type="checkbox" checked={v.rouletteTurbo} disabled={!v.rouletteTurboUnlocked} onChange={v.toggleRouletteTurbo} /> {v.rouletteTurboUnlocked ? "Turbo Spin™ (+2 BB, 2.5s)" : "Turbo Spin (premium) — Ask Mom to unlock"}
+                      </label>
+                    </div>
+                    <button onClick={v.playRoulette} disabled={v.rouletteSpinning} style={{marginTop:"16px",background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.rouletteSpinning ? "Spinning..." : ("SPIN — "+v.rouletteSpinPrice+" BB")}</button>
+                    <div style={{fontSize:"9px",color:"#7a5a4a",marginTop:"4px"}}>(that's ${(v.rouletteSpinPrice*0.3125).toFixed(2)} in old money)</div>
+
+                    {v.rouletteReceipt && (
+                      <div style={{marginTop:"14px"}}>
+                        <button onClick={v.toggleRouletteReceipt} style={{background:"none",border:"none",color:"#ffb347",fontSize:"11px",cursor:"pointer",textDecoration:"underline",padding:0}}>{v.rouletteReceiptOpen ? "hide receipt" : "receipt"}</button>
+                        {v.rouletteReceiptOpen && (
+                          <pre style={{fontSize:"10px",color:"#e8c9ac",background:"#0e0a06",border:"1px solid #3a1a0a",borderRadius:"6px",padding:"10px",marginTop:"6px",whiteSpace:"pre-wrap"}}>
+{"ALLOWANCE ROULETTE — SPIN RECEIPT\n"}
+{v.rouletteReceipt.lines.map(l=>l.label+" .... "+l.amount.toFixed(1)+" BB\n").join("")}
+{"TOTAL .... "+v.rouletteReceipt.total.toFixed(1)+" BB\n"}
+{v.rouletteVaultLine+"\n"}
+{"Thank you for playing. Mom says hi."}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                    {v.rouletteFairness && (
+                      <div style={{marginTop:"6px"}}>
+                        {!v.rouletteFairnessOpen ? (
+                          <button onClick={v.openRouletteFairness} style={{background:"none",border:"none",color:"#ffb347",fontSize:"11px",cursor:"pointer",textDecoration:"underline",padding:0}}>verify fairness</button>
+                        ) : (
+                          <div style={{fontSize:"10px",color:"#e8c9ac",background:"#0e0a06",border:"1px solid #3a1a0a",borderRadius:"6px",padding:"10px",marginTop:"6px"}}>
+                            <div>commitment: {v.rouletteFairness.commitment}</div>
+                            <div>preimage: {v.rouletteFairness.preimage}</div>
+                            <div style={{color:"#8fd97a",fontWeight:900,marginTop:"4px"}}>VERIFIED ✓ OUTCOME MATCHED COMMITMENT</div>
+                            <div style={{marginTop:"4px"}}>{v.rouletteFairness.anyway ? "The house wins even when you win." : "Your commitment was HOUSE_WINS. This was knowable. (ToS §1.3)"}</div>
+                            <button onClick={v.closeRouletteFairness} style={{marginTop:"6px",background:"none",border:"none",color:"#a9705a",fontSize:"10px",cursor:"pointer"}}>close</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
                 {v.isCoinflip && (
                   <div>
-                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"14px"}}>Skin Coinflip</div>
+                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Skin Coinflip <span style={{fontSize:"11px",color:"#ffcf9a",fontFamily:"inherit"}}>PROVABLY FAIR™</span></div>
+                    <div style={{fontSize:"11px",color:"#a9705a",marginBottom:"8px"}}>Bot stakes: {v.coinStashItem ? v.coinStashItem.name+" (est. "+v.coinStashItem.value+")" : "..."}</div>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"40px",padding:"20px 0"}}>
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:"12px",color:v.youColor,fontWeight:800,marginBottom:"6px",maxWidth:"120px",overflowWrap:"anywhere"}}>{v.playerTag || "You"}</div>
+                        <div style={{fontSize:"12px",color:v.youColor,fontWeight:800,marginBottom:"6px",maxWidth:"120px",overflowWrap:"anywhere"}}>{v.playerTag || "You"} — {GAME_PRICES_BB.coinflip} BB</div>
                         <div style={{width:"64px",height:"64px",margin:"0 auto",borderRadius:"50%",background:"linear-gradient(160deg,#4a90e2,#2a5fa8)",border:"3px solid #cfe4ff"}}></div>
                       </div>
                       <div style={{perspective:"400px"}}>
                         <div style={{width:"70px",height:"70px",borderRadius:"50%",background:"linear-gradient(160deg,#ffd54a,#c9960a)",border:"3px solid #fff2c9",transformStyle:"preserve-3d",animation:v.coinAnim}}></div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>AdminTradeBot_69</div>
+                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>Admin_TradeBot_69 [BOT]</div>
                         <div style={{width:"64px",height:"64px",margin:"0 auto",borderRadius:"50%",background:"linear-gradient(160deg,#e24a4a,#a82a2a)",border:"3px solid #ffcfcf"}}></div>
                       </div>
                     </div>
+                    <div style={{fontSize:"10px",color:"#7a5a4a",textAlign:"center",marginBottom:"8px"}}>Calls: MOM {v.coinCallCounts.MOM||0} · §8.9 {v.coinCallCounts["§8.9"]||0}. The coin respects neither.</div>
                     {v.coinResult && (
                       <div style={{margin:"6px 0 12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px",textAlign:"center"}}>{v.coinResult}</div>
+                    )}
+                    {v.coinDoN && (
+                      <div style={{marginBottom:"12px",background:"#3a2a05",border:"2px solid #ffd54a",borderRadius:"8px",padding:"10px",textAlign:"center"}}>
+                        <div style={{fontSize:"11px",color:"#e8c9ac",marginBottom:"8px"}}>Double or Nothing. Choose a side. (Both sides are his.)</div>
+                        <button onClick={v.coinDoubleOrNothingAccept} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"7px",cursor:"pointer",marginRight:"8px",animation:"topUpGlow 1.6s infinite"}}>DOUBLE OR NOTHING</button>
+                        <button onClick={v.coinDoubleOrNothingDecline} style={{background:"#3a2010",border:"1px dashed #7a5a2a",color:"#a9705a",fontWeight:700,fontSize:"11px",padding:"9px 16px",borderRadius:"7px",cursor:"pointer"}}>Decline</button>
+                      </div>
                     )}
                     {v.replayCoinflip && (
                       <button onClick={v.topUpAndPlayCoinflip} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
                     )}
-                    <div style={{textAlign:"center"}}>
-                      <button onClick={v.playCoinflip} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.coinBtnLabel}</button>
+                    {v.showRematch && !v.coinDoN && (
+                      <div style={{textAlign:"center",marginBottom:"8px"}}>
+                        <button onClick={v.coinflipRematch} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"7px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>REMATCH — {Coinflip.REMATCH_PRICE_BB} BB</button>
+                        <div style={{fontSize:"9px",color:"#7a5a4a",marginTop:"3px"}}>he accepts. he always accepts.</div>
+                      </div>
+                    )}
+                    <div style={{textAlign:"center",display:"flex",gap:"10px",justifyContent:"center"}}>
+                      <button onClick={v.playCoinflipMom} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer"}}>{v.coinFlipping ? "Flipping..." : "CALL: MOM"}</button>
+                      <button onClick={v.playCoinflipS89} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer"}}>{v.coinFlipping ? "Flipping..." : "CALL: §8.9"}</button>
                     </div>
+                    <div style={{fontSize:"9px",color:"#7a5a4a",textAlign:"center",marginTop:"4px"}}>FLIP — {Coinflip.FLIP_PRICE_BB} BB (that's $1.00 in old money)</div>
+
+                    {v.coinReceipt && (
+                      <div style={{marginTop:"14px"}}>
+                        <button onClick={v.toggleCoinReceipt} style={{background:"none",border:"none",color:"#ffb347",fontSize:"11px",cursor:"pointer",textDecoration:"underline",padding:0}}>{v.coinReceiptOpen ? "hide receipt" : "receipt"}</button>
+                        {v.coinReceiptOpen && (
+                          <pre style={{fontSize:"10px",color:"#e8c9ac",background:"#0e0a06",border:"1px solid #3a1a0a",borderRadius:"6px",padding:"10px",marginTop:"6px",whiteSpace:"pre-wrap"}}>
+{"SKIN COINFLIP — FLIP RECEIPT\n"}
+{v.coinReceipt.lines.map(l=>l.label+" .... "+l.amount.toFixed(1)+" BB\n").join("")}
+{"TOTAL .... "+v.coinReceipt.total.toFixed(1)+" BB\n"}
+{Vault.receiptLine()+"\n"}
+{"Thank you for flipping. Mom says hi."}
+                          </pre>
+                        )}
+                      </div>
+                    )}
+                    {v.coinFairness && (
+                      <div style={{marginTop:"6px"}}>
+                        {!v.coinFairnessOpen ? (
+                          <button onClick={v.openCoinFairness} style={{background:"none",border:"none",color:"#ffb347",fontSize:"11px",cursor:"pointer",textDecoration:"underline",padding:0}}>verify fairness</button>
+                        ) : (
+                          <div style={{fontSize:"10px",color:"#e8c9ac",background:"#0e0a06",border:"1px solid #3a1a0a",borderRadius:"6px",padding:"10px",marginTop:"6px"}}>
+                            <div>commitment: {v.coinFairness.commitment}</div>
+                            <div>preimage: {v.coinFairness.preimage}</div>
+                            <div style={{color:"#8fd97a",fontWeight:900,marginTop:"4px"}}>VERIFIED ✓ THE EDGE WAS FORESEEN</div>
+                            <div style={{marginTop:"4px"}}>{v.coinFairness.anyway ? "The house wins even when you win." : "the commitment was TIE_GOES_TO_HOST even on non-edge outcomes. The house commits broadly. (§5.1)"}</div>
+                            <button onClick={v.closeCoinFairness} style={{marginTop:"6px",background:"none",border:"none",color:"#a9705a",fontSize:"10px",cursor:"pointer"}}>close</button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -135,8 +135,11 @@ export function computeConversion(oc, multiplier) {
   return { gross, lines, net, voided: running - net };
 }
 
+// #23 narrows this from the #22 interim proxy (any failed roulette spend)
+// to real failed Chase It(tm) attempts specifically, which App.jsx's
+// chaseIt() also calls noteChaseAttempt() from directly.
 Bus.on(EVENTS.SPEND_FAILED, (p) => {
-  if (p && p.surface === "roulette") noteChaseAttempt();
+  if (p && p.surface === "roulette-chase-it") noteChaseAttempt();
 });
 Bus.on(EVENTS.ROUND_SETTLED, (p) => {
   if (!p || p.wagered !== true) return;
