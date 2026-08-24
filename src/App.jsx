@@ -3,6 +3,8 @@ import { Mood } from "./spine/mood.js";
 import { Bus, EVENTS, Regime } from "./spine/bus.js";
 import "./spine/vault.js";
 import "./spine/band.js";
+import { Identity, generateTag, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
+import { Wallet } from "./spine/wallet.js";
 import {
   GAME_PRICES_BB, MATERNAL_STARTER_GRANT_BB, DESPERATION_THRESHOLD_BB,
   V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE,
@@ -16,7 +18,6 @@ const SKIN_IMAGES = Object.fromEntries(
   ])
 );
 
-const NAMES = ["xX_QuickScope_Xx","yeetmaster3000","Timmy_Investor","sk8rboi_2009","GrandmasCreditCard","DiscordModReal","EpicGamerMom","BasementDweller44","QuickscopeQueen","NotABot_Trust","AllowanceLaundry","JuiceBoxJunkie"];
 const WIN_TEMPLATES = [
   "{n} just won a Karambit worth $12,000 (screenshot not available)",
   "{n} deposited their lunch money and feels GREAT about it",
@@ -52,6 +53,112 @@ const CATALOG = [
 ];
 const ROULETTE_STRIP = Array.from({length:20},(_,i)=>{const it=CATALOG[i%CATALOG.length];return {short:it.name.split("|")[0].trim(),color:RARITY_COLORS[it.rarity]||"#ff8a3d",image:SKIN_IMAGES[it.id]};});
 
+const GATE_CHECKBOXES = [
+  "I am at least 18 years old.",
+  "My older brother is in the other room and said it's fine. (§1.1)",
+  "I accept that 'the law of vibes' is not a real jurisdiction and agree to be bound by it anyway.",
+];
+const GATE_REJECTIONS = [
+  "That year is not accepted at this time.",
+  "Error: that year would make you an adult, and adults don't type like this.",
+  "Our records indicate you were born in 2012. Records are final (§1.2(a)).",
+];
+const KAREN_YEAR = "1998 (Mom's friend Karen's son)";
+const SHUFFLED_YEARS = (()=>{const y=Array.from({length:2015-1990+1},(_,i)=>String(1990+i));for(let i=y.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[y[i],y[j]]=[y[j],y[i]];}return y;})();
+const REALITY_STRAP = "100% fake. No money moves. No card is charged. No account exists. Ever. (§12.4)";
+const GRANT_TOAST = "Maternal Starter Grant received: "+MATERNAL_STARTER_GRANT_BB+" Banana Bucks (§2.6). Mom doesn't know yet.";
+const TOS_EDIT_NOTICE = "Notice: §8.9 was edited while you were reading this. The mood has changed. No further information will be provided.";
+
+const TOS_ARTICLES = [
+  {title:"Article 1 — About You", clauses:[
+    {n:"§1.1",t:"The Older Brother Clause",b:"Users are eligible if they are at least 18 years old, OR their older brother is in the other room and said it's fine. The Older Brother's permission is self-sufficient, non-transferable to younger siblings' friends, and expires when he gets up to get a snack. The Operator may not verify the Older Brother's existence, location, or vibe."},
+    {n:"§1.2",t:"Date of Birth Attestation",b:"(a) The User's birth year is whatever the dropdown eventually accepts. Records are final. (b) Birth years that would make the User an adult are rejected on sight, as adults do not type like this. The year the User did not pick may be recorded for marketing purposes."},
+    {n:"§1.3",t:"Identity Verification",b:"(a) To execute a balance withdrawal exceeding $0.00, users must upload a notarized copy of their 4th-grade report card, a signed handwritten letter from their guidance counselor, and physical delivery of three (3) unopened energy drink cans to our P.O. Box in Grand Cayman. (b) All withdrawal requests remain in a state of Pending until the foregoing is received. The foregoing has never been received. Withdrawals are, accordingly, Pending. (See also §6.)"},
+  ]},
+  {title:"Article 2 — The Money (Such As It Is)", clauses:[
+    {n:"§2.1",t:"Emotional Tender",b:"Obtuse Credits™ are non-refundable, non-transferable, and constitute \"emotional tender\" — a currency that binds only feelings. Upon acquisition, OC are legally indistinguishable from pride."},
+    {n:"§2.2",t:"Banana Bucks",b:"Banana Bucks (BB) are the play currency in which all wagers are denominated. BB hold no value of any kind, which the Operator considers a feature."},
+    {n:"§2.3",t:"Bonus Credits",b:"\"Bonus\" OC included with select refill packages are bonus in name only. Bonus OC expire with the mood that granted them: at the next daily mood change they are void, unconverted, and described in the past tense. Expired Bonus OC may not be mourned on the premises."},
+    {n:"§2.4",t:"Derived Denominations",b:"V-Gems (×40,000 per BB) and SkinCoinz (×566.67 per BB) are display-only derivations of the BB balance, rounded in whichever direction hurts. The USD denomination is permanently estimated at $0.00. This is not a rounding error. This is the estimate."},
+    {n:"§2.5",t:"One-Way Conversion",b:"OC may be converted to BB (see §8). BB may not be converted to OC, back to Mom's card, or into anything else, a state the Operator describes as \"diplomatically impossible.\""},
+    {n:"§2.6",t:"Maternal Starter Grant",b:"Each new player receives 150 BB, issued as the Maternal Starter Grant: an advance against future chores, repayable in chores, forgiven never. Mom does not know about this loan. She will."},
+  ]},
+  {title:"Article 3 — The Maternal Funding Rail", clauses:[
+    {n:"§3.1",t:"Authorized Cardholder",b:"The only authorized funding instrument is Mom's card. Authorization is inferred from proximity, plausibility, and the phrase \"she said it's fine.\""},
+    {n:"§3.2",t:"Depositing on Behalf of a Minor",b:"By proceeding, the depositor affirms that the card is Mom's, that Mom has not explicitly denied permission, and that \"she said it's fine\" referred to a different thing entirely (see §1.1, the Older Brother Clause). Deposits are final. Refunds are a §6 concept. Card details are not collected, because there is no card. There is no payment processor. This is a joke about gambling, not gambling. The only thing charged here is the vibe."},
+    {n:"§3.3",t:"Are You Mom? Verification",b:"Persons claiming to be Mom must complete the Verification Gauntlet. The Gauntlet cannot be passed. Applicants who fail the Gauntlet are certified Mom-adjacent minors and may deposit immediately. Mom herself has never applied, and good for her."},
+    {n:"§3.4",t:"Maternal Gratuity",b:"Every conversion includes a Maternal Gratuity of 1 BB. The Gratuity is customary, not required, automatically applied, non-negotiable, and retained entirely by the house. Tipping is how Mom shows she cares; here, the site shows it on her behalf, to itself."},
+    {n:"§3.5",t:"Refill Packages",b:"Refill packages (\"Lunch Money Special,\" \"Allowance Advance,\" \"Report Card Bonus,\" \"Mom's Max\") are priced in fake USD and denominated in OC. \"Mom's Max\" is sold on the understanding that this is the last time, an understanding that resets upon purchase (see §10.3)."},
+  ]},
+  {title:"Article 4 — Disputes", clauses:[
+    {n:"§4.1",t:"Dispute Resolution",b:"All claims, disputes, or losses shall be resolved not in a court of law, but via a mandatory 1v1 Quickscope Match on Rust (Radar Always On, Intervention Only). If the User loses, their account balance is permanently forfeited to site operational overhead. The Operator has never lost this match. The Operator practices."},
+    {n:"§4.2",t:"Reenactments",b:"All reels, wheels, coins, multipliers, progress bars, and replays are reenactments of outcomes decided before the animation began. The performance is staged for your convenience. Disputes concerning the outcome concern the outcome; disputes concerning the performance concern nothing (see §4.1). Near-misses are choreography, and the choreographer is on staff."},
+  ]},
+  {title:"Article 5 — Gameplay & Fairness", clauses:[
+    {n:"§5.1",t:"Provably Fair™",b:"Every roll is verifiable. Verification is Pending (see §1.3). The PROVABLY FAIR™ badge links somewhere. Where is a mood."},
+    {n:"§5.2",t:"Odds Disclosure",b:"Odds: yes. (Full table available on request. Requests are mood-dependent, per §8.9.)"},
+    {n:"§5.3",t:"The House",b:"The house always wins eventually. \"Eventually\" is defined by the house, mid-game, out loud, while laughing."},
+    {n:"§5.4",t:"Edge Outcomes",b:"(a) In the event of an edge outcome, the tie is awarded to the server host. The rim is load-bearing. (b) Each player's first flip is permitted to win. One (1) per session, per tradition. (c) Repeated edge outcomes are adjudicated by increasingly qualified personnel, up to and including the admin's cousin (studying for it) and quantum drift (§8.9). (d) The Maternal Doubloon's faces are MOM and §8.9. The rim is the house's."},
+    {n:"§5.5",t:"Scheduling & Character Building",b:"(a) All outcomes are scheduled in advance for your convenience. (b) The schedule is disclosed to no one, for any reason. Disclosure is a mood. (c) Everyone wins once. It builds character."},
+  ]},
+  {title:"Article 6 — Withdrawals & Other Theoretical Concepts", clauses:[
+    {n:"§6.1",t:"Pending Status",b:"Withdrawals are Pending. See §1.3, which is not near here on purpose."},
+    {n:"§6.2",t:"ExpressCashout",b:"An express cash-out feature is coming soon. ETA: mood."},
+  ]},
+  {title:"Article 7 — Responsible Gaming", clauses:[
+    {n:"§7.1",t:"Self-Exclusion",b:"To self-exclude, close the tab. To permanently self-exclude, have Mom change the Wi-Fi password. She has been meaning to anyway."},
+    {n:"§7.2",t:"Deposit Limits",b:"To set a deposit limit, ask Mom to set a deposit limit. This is the only supported limit mechanism, and it is extremely effective."},
+    {n:"§7.3",t:"Parental Bailout Feature",b:"The Operator is proud to offer a best-in-class responsible gaming suite: the MOM'S HOME button instantly replaces the entire casino with homework. No licensed operator offers anything comparable, which says something about licensed operators."},
+    {n:"§7.4",t:"The Honest Paragraph",b:"If gambling has stopped being a joke for you or for someone you know, the joke portion of this website is over for one paragraph: help is real and it works — BeGambleAware (begambleaware.org), Gamblers Anonymous (gamblersanonymous.org), or in the US, 1-800-GAMBLER. That was the only honest paragraph on this site. Everything else, including this sentence's neighbors, is satire."},
+  ]},
+  {title:"Article 8 — Rates, Fees & Moods", art8:true, clauses:[
+    {n:"§8.1",t:"Conversion, Generally",b:"OC convert to BB at a base rate multiplied by the Daily Mood (§8.9). The numeric rate is never displayed. It has been described as \"a number,\" which is all the disclosure required by vibes."},
+    {n:"§8.2",t:"Mood Stabilization Fee",b:"Each conversion bears a Mood Stabilization Fee of 7.3%. The fee keeps the rate from getting worse. The rate gets worse anyway, but calmer."},
+    {n:"§8.3",t:"Conversion Processing Fee",b:"Each conversion bears a flat Conversion Processing Fee of 5 BB, which compensates the house for pressing the button."},
+    {n:"§8.4",t:"Order of Operations",b:"Fees apply in the order listed on the receipt, then §8.9 applies to whatever remains, then whatever remains after that is what you get."},
+    {n:"§8.5",t:"No Take-Backs",b:"Conversions are final, even if the mood improves one hour later. Especially then."},
+    {n:"§8.6",t:"Reserved",b:"Reserved for fees we haven't invented yet."},
+    {n:"§8.7",t:"Rim Maintenance",b:"Each flip bears a Rim Maintenance fee, compensating the house for certifying both faces of the Maternal Doubloon and, especially, the rim. The rim is load-bearing (see §5.4). Maintenance is customary, not required, and automatically applied."},
+    {n:"§8.8",t:"Reserved",b:"Reserved for fees we haven't invented yet either."},
+    {n:"§8.9",t:"Currency Volatility",b:"(a) SkinCoinz and Banana Bucks hold no real-world monetary value, spiritual value, or intrinsic utility, and may be recalculated at any time based on the server admin's daily mood. (b) Obtuse Credits™ are included in the foregoing by reference and also by mood. The Daily Mood is deterministic, shared by all players for the whole day, expressed publicly only as one (1) of five (5) adjectives, and never favorable two days in a row, because that would be suspicious. (c) §8.9 rounding is always down. Fractional BB are voided and itemized on the receipt so that you may grieve them individually."},
+  ]},
+  {title:"Article 9 — Amendments", clauses:[
+    {n:"§9.1",t:"Unilateral Amendments",b:"These Terms may be amended at any time, for any reason, or for no reason, which the Operator finds funny."},
+    {n:"§9.2",t:"Notice",b:"Notice of amendment shall be provided by a small toast stating that a section was edited while you were reading this. Continued reading constitutes acceptance of both versions. Not reading also constitutes acceptance. Acceptance is the default state of the User (§10.2)."},
+  ]},
+  {title:"Article 10 — Consent Theater", clauses:[
+    {n:"§10.1",t:"Scroll Requirement",b:"(a) Consent is valid only upon reaching the bottom of all forty (40) screens of these Terms, as measured by the Consent Meter. (b) The Meter caps at 99% until the User lingers at the bottom for three (3) seconds, a dwell requirement so that acceptance may be savored."},
+    {n:"§10.2",t:"The Ledger",b:"The User's acceptances are recorded in a bound leather ledger kept in the treehouse. The ledger is real to us."},
+    {n:"§10.3",t:"Re-Acceptance",b:"The Meter re-arms upon: (i) purchase of Mom's Max, the \"last time\" package, because last times reset the ledger; and (ii) any Notice under §9.2, effective on the next opening of these Terms."},
+  ]},
+  {title:"Article 11 — Privacy", clauses:[
+    {n:"§11.1",t:"Your Data",b:"All data is stored in your own browser. Our server is your browser, which means our security posture is your security posture, and we wish you luck."},
+  ]},
+  {title:"Article 12 — Miscellaneous", clauses:[
+    {n:"§12.0",t:"Emergency Maternal Protocol",b:"In the event of maternal proximity, triple-tap ESC. This is the only three-tap sequence the site takes seriously."},
+    {n:"§12.1",t:"Entire Agreement",b:"This is the entire agreement. There is nothing else. Do not look for anything else."},
+    {n:"§12.2",t:"Severability",b:"If any clause is found to be enforceable, it was a drafting error and will be replaced with a joke."},
+    {n:"§12.3",t:"Governing Law",b:"The law of vibes, as established at the Age Gate."},
+    {n:"§12.4",t:"Reality",b:"Nothing in these Terms, on this website, or in your balance is real. This is a satirical parody of skin-gambling websites. No real money, payment, account, or server exists. If any clause herein appears to create a real financial obligation, it is a joke, and the joke is at the expense of websites that mean it."},
+  ]},
+];
+
+const TOS_FILLER_TEMPLATES = [
+  "WHEREAS the User, hereinafter 'the User,' did whereas the foregoing, notwithstanding;",
+  "The Operator reserves all rights, including the rights not enumerated, the rights previously waived, and the right of way.",
+  "This paragraph intentionally left enforceable.",
+];
+const TOS_FILLER = Array.from({length:35},(_,i)=>{
+  const num = 13.1 + i*(28.8/34);
+  const art = Math.floor(num);
+  let sub = Math.round((num-art)*10);
+  if (sub<1) sub=1; if (sub>9) sub=9;
+  const n = "§"+art+"."+sub;
+  if (i===9||i===19||i===29) return {n, body:"Mood: [REDACTED]"};
+  if (i===33) return {n, body:"so close! (0.0%)", faint:true};
+  return {n, body:TOS_FILLER_TEMPLATES[i%3]};
+});
+
 function fmtBB(bb){
   if (!Number.isFinite(bb)) return "0";
   return String(parseFloat(bb.toFixed(2)));
@@ -60,7 +167,15 @@ function fmtBB(bb){
 class App extends React.Component {
   state = {
     ageVerified:false, confettiOn:false, confettiPieces:[],
-    tosOpen:false, panicActive:false,
+    flowPhase:"gate", gateStep:0, gateChecks:[false,false,false], gateMomNote:null,
+    gateYearMsg:null, gateYearOk:false, gateRejections:0,
+    momModalOpen:false, momModalStep:0, momModalMsg:null, momModalQ1:"", momModalQ2:"", momModalCheck:false,
+    momsGlow:false,
+    tosOpen:false, tosConsent:false, tosNeedsConsent:true, tosAcceptedEver:false,
+    tosPct:0, tosDwellOk:false,
+    identityOpen:false, customInput:"", customMsg:null,
+    ident:null, stats:null, ocBalance:0, toast:null,
+    panicActive:false,
     activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
     moodWord:null, denomsOpen:false, topUpNote:false,
     ticker:[], chat:[],
@@ -70,9 +185,13 @@ class App extends React.Component {
     crateKeyBought:false, crateOpening:false, crateProgress:0, crateResult:null
   };
 
+  _tosScrollRef = React.createRef();
+  _art8Ref = React.createRef();
+
   componentDidMount() {
     let balance = MATERNAL_STARTER_GRANT_BB;
     let returning = false;
+    let ageOk = false;
     try {
       const saved = localStorage.getItem("hfes_balance_bb");
       const legacy = localStorage.getItem("hfes_balance");
@@ -87,14 +206,47 @@ class App extends React.Component {
         returning = true;
         localStorage.removeItem("hfes_balance");
       }
-      if (age === "1") this.setState({ageVerified:true});
+      ageOk = age === "1";
     } catch(e){}
-    this.setState({balanceBB:balance});
+    let tosAcceptedEver = false;
+    try { tosAcceptedEver = !!(JSON.parse(localStorage.getItem("hfes_tos") || "null") || {}).acceptedOnce; } catch(e){}
+    const sess = Identity.beginSession();
+    let flowPhase = "gate";
+    let welcomeToast = null;
+    if (ageOk) {
+      flowPhase = "done";
+      if (!sess.existingIdentity) {
+        Identity.assign();
+        welcomeToast = "New identity detected. Previous debts forgiven. Previous winnings also forgiven (§8.9).";
+      } else if (sess.toast) {
+        welcomeToast = sess.toast;
+      }
+    }
+    this.setState({
+      balanceBB:balance, flowPhase, ageVerified:ageOk,
+      tosAcceptedEver, tosNeedsConsent:!tosAcceptedEver,
+      ident:Identity.get(), stats:Identity.getStats(), ocBalance:Wallet.oc(),
+    });
     this.saveBalance(balance);
+    if (welcomeToast) this.showToast(welcomeToast);
     this._offMood = Mood.onChange(({word})=>this.setState({moodWord:word}));
+    this._offIdent = Identity.subscribe(({identity, stats})=>this.setState({ident:identity, stats}));
+    this._offWallet = Wallet.subscribe(oc=>this.setState({ocBalance:oc}));
+    this._offDep = Bus.on(EVENTS.DEPOSIT_COMPLETED, p=>{ if (p && p.packageId === "moms-max") this.setState({tosNeedsConsent:true}); });
     Mood.init();
     Bus.emit(EVENTS.SESSION_STARTED, {returning});
     Regime.evaluate(balance);
+    this._tosTick = setInterval(()=>{
+      if (!this.state.tosOpen) { this._tosElapsed = 0; this._tosNoticeFired = false; return; }
+      if (this._tosNoticeFired) return;
+      if (this.art8InView()) return;
+      this._tosElapsed = (this._tosElapsed || 0) + 1;
+      if (this._tosElapsed >= 45) {
+        this._tosNoticeFired = true;
+        this.setState({tosNeedsConsent:true});
+        this.showToast(TOS_EDIT_NOTICE, {dismiss:"Acknowledged (both versions)."});
+      }
+    }, 1000);
     this.scheduleTicker();
     this.scheduleChat();
   }
@@ -104,8 +256,9 @@ class App extends React.Component {
   scheduleTicker(){
     const delay = 2000 + Math.random()*2000;
     this._tTimer = setTimeout(()=>{
-      const n = NAMES[Math.floor(Math.random()*NAMES.length)];
-      const t = WIN_TEMPLATES[Math.floor(Math.random()*WIN_TEMPLATES.length)].replace("{n}", n);
+      const tag = generateTag({avoid:this._recentNames || []});
+      this._recentNames = [tag, ...(this._recentNames || [])].slice(0,8);
+      const t = WIN_TEMPLATES[Math.floor(Math.random()*WIN_TEMPLATES.length)].replace("{n}", tag);
       this.setState(s=>({ticker:[t, ...s.ticker].slice(0,8)}));
       this.scheduleTicker();
     }, delay);
@@ -122,17 +275,143 @@ class App extends React.Component {
     clearTimeout(this._tTimer); clearTimeout(this._cTimer);
     clearInterval(this._crashInt); clearInterval(this._crateInt);
     clearTimeout(this._insTimer); clearTimeout(this._topUpTimer);
+    clearTimeout(this._toastTimer); clearTimeout(this._tosDwellT); clearInterval(this._tosTick);
     if (this._offMood) this._offMood();
+    if (this._offIdent) this._offIdent();
+    if (this._offWallet) this._offWallet();
+    if (this._offDep) this._offDep();
   }
 
-  verify(){
-    try{ localStorage.setItem("hfes_age","1"); }catch(e){}
+  showToast(text, opts={}){
+    clearTimeout(this._toastTimer);
+    this.setState({toast:{text, dismiss:opts.dismiss || null}});
+    if (!opts.dismiss) this._toastTimer = setTimeout(()=>this.setState({toast:null}), 6000);
+  }
+  dismissToast(){ clearTimeout(this._toastTimer); this.setState({toast:null}); }
+
+  fireConfetti(){
     const pieces = Array.from({length:24},()=>({left:Math.random()*100,color:["#ff5a14","#ffd54a","#8fd97a","#4a90e2"][Math.floor(Math.random()*4)],dur:1+Math.random(),delay:Math.random()*0.4}));
-    this.setState({ageVerified:true, confettiOn:true, confettiPieces:pieces});
+    this.setState({confettiOn:true, confettiPieces:pieces});
     setTimeout(()=>this.setState({confettiOn:false}), 1600);
   }
 
-  toggleTos(){ this.setState(s=>({tosOpen:!s.tosOpen})); }
+  toggleGateCheck(i){
+    this.setState(s=>{const c=[...s.gateChecks]; c[i]=!c[i]; return {gateChecks:c};});
+  }
+  gateStep1Continue(){
+    if (!this.state.gateChecks.some(Boolean)) return;
+    this.setState({gateStep:1, gateMsg:null});
+  }
+  gateMomAnswer(which){
+    if (which==="yes"){ this.setState({gateStep:2, gateMomNote:"Perfect. Please do not tell her about this website. (§3.1)", momsGlow:true}); }
+    else if (which==="no"){ this.setState({gateStep:2, gateMomNote:"Even better."}); }
+    else { this.setState({momModalOpen:true, momModalStep:0, momModalMsg:null, momModalQ1:"", momModalQ2:"", momModalCheck:false}); }
+  }
+  momModalSubmit(){
+    const st = this.state.momModalStep;
+    if (st===0) this.setState({momModalStep:1, momModalMsg:"Incorrect. You don't know it. None of them do."});
+    else if (st===1) this.setState({momModalStep:2, momModalMsg:"Incorrect. The correct answer was 'no'."});
+  }
+  momModalFinish(){
+    this.setState({momModalOpen:false, gateMomNote:"Verification failed. Welcome back, sweetie."});
+  }
+  gateYearSelect(value){
+    if (value==="") return;
+    if (value==="karen"){ this.setState({gateYearMsg:"Verified. Welcome back, Kyle.", gateYearOk:true}); return; }
+    const yr = parseInt(value,10);
+    if (yr>=2009){ this.setState({gateYearMsg:"That tracks.", gateYearOk:true}); return; }
+    const n = this.state.gateRejections + 1;
+    this.setState({gateRejections:n, gateYearMsg:GATE_REJECTIONS[(n-1)%3], gateYearOk:false});
+  }
+  gateSkip(){
+    this.setState({gateYearMsg:"Verification waived per §1.2(b) — the birth year you didn't pick has been recorded.", gateYearOk:true});
+  }
+  completeGate(){
+    try{ localStorage.setItem("hfes_age","1"); }catch(e){}
+    this.fireConfetti();
+    Bus.emit(EVENTS.GATE_ACCEPTED, {firstVisit:true});
+    Identity.assign();
+    this.setState({ageVerified:true, flowPhase:"reveal"});
+  }
+  revealReroll(){ Identity.revealReroll(); }
+  acceptFate(){
+    this.resetTosMeter();
+    this.setState({flowPhase:"tos", tosOpen:true, tosConsent:true});
+  }
+
+  resetTosMeter(){
+    clearTimeout(this._tosDwellT);
+    this._tosDwellOk = false;
+    this._tosElapsed = 0;
+    this._tosNoticeFired = false;
+    this.setState({tosPct:0, tosDwellOk:false});
+  }
+  openTos(){
+    this.resetTosMeter();
+    this.setState(s=>({tosOpen:true, tosConsent:s.tosNeedsConsent}));
+  }
+  acceptTos(){
+    this.fireConfetti();
+    try{ localStorage.setItem("hfes_tos", JSON.stringify({acceptedOnce:true})); }catch(e){}
+    const firstFlow = this.state.flowPhase==="tos";
+    if (firstFlow) {
+      const tag = Identity.playerTag();
+      this.setState(s=>({
+        flowPhase:"done", tosOpen:false, tosConsent:false, tosNeedsConsent:false, tosAcceptedEver:true,
+        ticker:[tag+" joined. The house has been expecting you.", ...s.ticker].slice(0,8),
+      }));
+      this.showToast(GRANT_TOAST);
+    } else {
+      this.setState({tosOpen:false, tosConsent:false, tosNeedsConsent:false, tosAcceptedEver:true});
+    }
+    this.resetTosMeter();
+  }
+  closeTos(){
+    this.setState({tosOpen:false});
+    this.resetTosMeter();
+  }
+  onTosScroll(e){
+    const el = e.target;
+    const max = el.scrollHeight - el.clientHeight;
+    const raw = max>0 ? Math.min(100,(el.scrollTop/max)*100) : 100;
+    const atBottom = max<=0 || el.scrollTop + el.clientHeight >= el.scrollHeight - 8;
+    const effRaw = atBottom ? Math.max(raw, 99) : raw;
+    const pct = Math.floor(effRaw);
+    if (pct !== this.state.tosPct) this.setState({tosPct:pct});
+    if (atBottom && !this._tosDwellOk) {
+      clearTimeout(this._tosDwellT);
+      this._tosDwellT = setTimeout(()=>{ this._tosDwellOk = true; this.setState({tosDwellOk:true}); }, 3000);
+    } else if (!atBottom && this._tosDwellOk) {
+      clearTimeout(this._tosDwellT);
+      this._tosDwellOk = false;
+      this.setState({tosDwellOk:false});
+    }
+  }
+  art8InView(){
+    const art = this._art8Ref.current, sc = this._tosScrollRef.current;
+    if (!art || !sc) return false;
+    const a = art.getBoundingClientRect(), s = sc.getBoundingClientRect();
+    return a.bottom > s.top && a.top < s.bottom;
+  }
+
+  openIdentity(){ this.setState({identityOpen:true, customInput:"", customMsg:null}); }
+  closeIdentity(){ this.setState({identityOpen:false}); }
+  panelReroll(){
+    const fee = Identity.nextRerollFee();
+    if (fee>0 && !this.payBB(fee, "identity-reroll")) return;
+    Identity.applyPanelReroll();
+  }
+  buyCustom(){
+    const res = complianceFilter(this.state.customInput);
+    if (!res.ok) { this.setState({customMsg:res.error}); return; }
+    if (!Wallet.trySpendOC(CUSTOM_NAME_PRICE_OC, "custom-name")) {
+      this.setState({customMsg:"Insufficient OC. Custom names cost "+CUSTOM_NAME_PRICE_OC+" OC."});
+      return;
+    }
+    Identity.setCustom(res.name);
+    this.setState({customInput:"", customMsg:"Compliance Filter (mood: "+res.moodWord+") applied. Non-refundable."});
+  }
+
   togglePanic(){ this.setState(s=>({panicActive:!s.panicActive})); }
 
   flashInsufficient(failures){
@@ -141,21 +420,21 @@ class App extends React.Component {
     this._insTimer = setTimeout(()=>this.setState({insufficientMsg:null}), 2600);
   }
 
-  spendBB(surface){
-    const cost = GAME_PRICES_BB[surface];
-    if (!(this.state.balanceBB >= cost)) {
+  payBB(amount, reason){
+    if (!(this.state.balanceBB >= amount)) {
       const n = this.state.sessionSpendFailures + 1;
       this.setState({sessionSpendFailures:n});
       this.flashInsufficient(n);
-      Bus.emit(EVENTS.SPEND_FAILED, {surface, costBB:cost, sessionFailures:n});
+      Bus.emit(EVENTS.SPEND_FAILED, {surface:reason, costBB:amount, sessionFailures:n});
       return false;
     }
-    const nb = this.state.balanceBB - cost;
+    const nb = this.state.balanceBB - amount;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
-    Bus.emit(EVENTS.BB_SPENT, {amount:cost, reason:surface});
+    Bus.emit(EVENTS.BB_SPENT, {amount, reason});
     Regime.evaluate(nb);
     return true;
   }
+  spendBB(surface){ return this.payBB(GAME_PRICES_BB[surface], surface); }
 
   nextRoundId(){ this._roundSeq = (this._roundSeq||0)+1; return this._roundSeq; }
   settleRound(surface, roundId, kind){
@@ -261,12 +540,50 @@ class App extends React.Component {
     const tabBg = {}, tabColor = {};
     tabs.forEach(t=>{ const on = s.activeTab===t; tabBg[t]= on ? "linear-gradient(160deg,#3a1206,#2a0d05)" : "#1a0d05"; tabColor[t]= on ? "#ffb347" : "#a9705a"; });
     const catalog = CATALOG.map(it=>({...it, rarityColor: RARITY_COLORS[it.rarity]||"#ff8a3d"}));
+    const playerTag = s.ident ? (s.ident.custom || s.ident.tag) : null;
+    const gateOnlyFirst = s.gateChecks[0] && !s.gateChecks[1] && !s.gateChecks[2];
+    const gateCanContinue = s.gateChecks.some(Boolean);
+    const meterPct = (s.tosPct>=99 && s.tosDwellOk) ? 100 : Math.min(99, s.tosPct);
+    const rerollFee = s.ident ? s.ident.nextRerollFeeBB : 0;
+    const stats = s.stats || {};
     return {
-      ageVerified:s.ageVerified, confettiOn:s.confettiOn, confettiPieces:s.confettiPieces, verify:()=>this.verify(),
-      tosOpen:s.tosOpen, toggleTos:()=>this.toggleTos(),
+      ageVerified:s.ageVerified, confettiOn:s.confettiOn, confettiPieces:s.confettiPieces,
+      flowPhase:s.flowPhase,
+      gateStep:s.gateStep, gateChecks:s.gateChecks, gateOnlyFirst, gateCanContinue,
+      toggleGateCheck:(i)=>this.toggleGateCheck(i), gateStep1Continue:()=>this.gateStep1Continue(),
+      gateMomNote:s.gateMomNote, gateMomAnswer:(w)=>this.gateMomAnswer(w),
+      gateYearMsg:s.gateYearMsg, gateYearOk:s.gateYearOk, gateRejections:s.gateRejections,
+      gateYearOptions:SHUFFLED_YEARS, gateKarenYear:KAREN_YEAR, gateYearSelect:(v)=>this.gateYearSelect(v),
+      gateSkip:()=>this.gateSkip(), completeGate:()=>this.completeGate(),
+      momModalOpen:s.momModalOpen, momModalStep:s.momModalStep, momModalMsg:s.momModalMsg,
+      momModalQ1:s.momModalQ1, momModalQ2:s.momModalQ2, momModalCheck:s.momModalCheck,
+      setMomModalQ1:(v)=>this.setState({momModalQ1:v}), setMomModalQ2:(v)=>this.setState({momModalQ2:v}),
+      setMomModalCheck:(v)=>this.setState({momModalCheck:v}),
+      momModalSubmit:()=>this.momModalSubmit(), momModalFinish:()=>this.momModalFinish(),
+      momsGlow:s.momsGlow,
+      revealTag: s.ident ? s.ident.tag : null,
+      revealReroll:()=>this.revealReroll(), acceptFate:()=>this.acceptFate(),
+      tosOpen:s.tosOpen, tosConsent:s.tosConsent,
+      tosMeterLabel: meterPct>=100 ? "I have read the Terms (allegedly)" : meterPct>=99 ? "So close. Linger. (§10.1(b))" : "I have read the Terms ("+meterPct+"%)",
+      tosAcceptReady: meterPct>=100,
+      onTosScroll:(e)=>this.onTosScroll(e), acceptTos:()=>this.acceptTos(), closeTos:()=>this.closeTos(), openTos:()=>this.openTos(),
+      tosFooterLabel: s.tosAcceptedEver ? "Terms of Service (you've been warned)" : "Terms of Service (please don't read this)",
+      tosArticles:TOS_ARTICLES, tosFiller:TOS_FILLER, realityStrap:REALITY_STRAP,
+      tosScrollRef:this._tosScrollRef, art8Ref:this._art8Ref,
+      playerTag, youColor:YOU_COLOR,
+      identityOpen:s.identityOpen, openIdentity:()=>this.openIdentity(), closeIdentity:()=>this.closeIdentity(),
+      statsBBLost:stats.bbLost||0, statsUSD:stats.usdBorrowed||0, statsCrates:stats.cratesOpened||0,
+      statsWithdrawals:stats.withdrawalsPending||0, statsWorst:stats.worstLossBB||0, statsStreak:stats.lossStreak||0,
+      rerollFee, rerollFeeCopy: rerollFee===0 ? "Identity crisis #1: complimentary." : "Reroll fee: "+rerollFee+" BB (doubles each time, see §8.9). Changing your name does not change your debts.",
+      rerollLabel: rerollFee===0 ? "Reroll (free)" : "Reroll ("+rerollFee+" BB)",
+      doReroll:()=>this.panelReroll(),
+      customInput:s.customInput, setCustomInput:(v)=>this.setState({customInput:v}),
+      customMsg:s.customMsg, buyCustom:()=>this.buyCustom(), customPrice:CUSTOM_NAME_PRICE_OC,
+      customAffordable: s.ocBalance >= CUSTOM_NAME_PRICE_OC, ocBalance:s.ocBalance,
+      toast:s.toast, dismissToast:()=>this.dismissToast(),
       panicActive:s.panicActive, togglePanic:()=>this.togglePanic(),
       mainBlurFilter: s.panicActive ? "blur(4px)" : "none",
-      bbDisplay:fmtBB(bb), ocDisplay:"0",
+      bbDisplay:fmtBB(bb), ocDisplay:String(s.ocBalance),
       vgDisplay:Math.round(vg).toLocaleString("en-US"), scDisplay:sc.toFixed(2),
       moodLine: s.moodWord ? ("Today's mood: "+s.moodWord+" — rates recalculated per §8.9") : "",
       showNag: bb < DESPERATION_THRESHOLD_BB, nagCopy:NAG_LOW_BB_COPY,
@@ -305,50 +622,220 @@ class App extends React.Component {
 
   render() {
     const v = this.renderVals();
-    return (
-      <div style={{fontFamily:"Arial,Helvetica,sans-serif",background:"radial-gradient(circle at 50% -10%,#3a1206,#160805 60%)",minHeight:"100vh",color:"#ffe9d6",position:"relative"}}>
 
-        {!v.ageVerified && (
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-            <div style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ff5a14",borderRadius:"10px",maxWidth:"460px",padding:"32px",textAlign:"center",boxShadow:"0 0 60px rgba(255,80,20,0.4)"}}>
-              <div style={{fontFamily:"'Bangers',cursive",fontSize:"34px",color:"#ffb347",letterSpacing:"1px",textShadow:"2px 2px 0 #7a1c00"}}>AGE VERIFICATION REQUIRED</div>
-              <p style={{color:"#ffd9b3",fontSize:"15px",lineHeight:1.5,margin:"16px 0 24px"}}>By law (the law of vibes), you must confirm your eligibility before accessing real-money-adjacent gambling-flavored entertainment.</p>
-              <button onClick={v.verify} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"15px",padding:"14px 20px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>I am 18+, or my older brother is in the other room and said it's fine.</button>
-              <div style={{marginTop:"16px",fontSize:"10px",color:"#a9705a",lineHeight:1.5}}>This is a satirical parody. No real money, currency, or skins exist here. Nothing on this page has value. Please, for the love of god, log off.</div>
+    const gateCard = (
+      <div style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ff5a14",borderRadius:"10px",maxWidth:"460px",width:"100%",padding:"32px",textAlign:"center",boxShadow:"0 0 60px rgba(255,80,20,0.4)"}}>
+        <div style={{fontFamily:"'Bangers',cursive",fontSize:"34px",color:"#ffb347",letterSpacing:"1px",textShadow:"2px 2px 0 #7a1c00"}}>AGE VERIFICATION REQUIRED</div>
+        <p style={{color:"#ffd9b3",fontSize:"15px",lineHeight:1.5,margin:"16px 0 24px"}}>By law (the law of vibes), you must confirm your eligibility before accessing real-money-adjacent gambling-flavored entertainment.</p>
+
+        {v.gateStep===0 && (
+          <div>
+            <div style={{fontFamily:"'Bangers',cursive",fontSize:"18px",color:"#ff8a3d",marginBottom:"12px",letterSpacing:"1px"}}>ARE YOU OLD ENOUGH? (SPEEDRUN)</div>
+            {GATE_CHECKBOXES.map((label,i)=>(
+              <label key={i} style={{display:"flex",alignItems:"flex-start",gap:"8px",textAlign:"left",background:"#1c0d06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"9px 11px",marginBottom:"8px",fontSize:"12.5px",color:"#ffd9b3",cursor:"pointer",lineHeight:1.4}}>
+                <input type="checkbox" checked={v.gateChecks[i]} onChange={()=>v.toggleGateCheck(i)} style={{marginTop:"2px"}} />
+                <span>{label}</span>
+              </label>
+            ))}
+            {v.gateOnlyFirst && (
+              <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic",margin:"6px 0"}}>Suspicious. Nobody checks only the first box. Proceeding anyway.</div>
+            )}
+            <button onClick={v.gateStep1Continue} disabled={!v.gateCanContinue} style={{marginTop:"14px",background:v.gateCanContinue?"linear-gradient(180deg,#ff8a3d,#e0480a)":"#3a2010",border:"2px solid #ffcf9a",color:v.gateCanContinue?"#2a0e05":"#8a6a52",fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",cursor:v.gateCanContinue?"pointer":"not-allowed",width:"100%"}}>{v.gateCanContinue?"Continue":"Select at least one (1) truth."}</button>
+          </div>
+        )}
+
+        {v.gateStep===1 && (
+          <div>
+            <div style={{fontFamily:"'Bangers',cursive",fontSize:"18px",color:"#ff8a3d",marginBottom:"12px",letterSpacing:"1px"}}>IS MOM HOME?</div>
+            {v.gateMomNote && (
+              <div style={{background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"9px 11px",marginBottom:"12px",fontSize:"12.5px",color:"#e8a52a",fontStyle:"italic"}}>{v.gateMomNote}</div>
+            )}
+            <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
+              <button onClick={()=>v.gateMomAnswer("yes")} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>Yes</button>
+              <button onClick={()=>v.gateMomAnswer("no")} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>No</button>
+              <button onClick={()=>v.gateMomAnswer("mom")} style={{background:"#3a2010",border:"2px dashed #ff8a3d",color:"#ffcf9a",fontWeight:900,fontSize:"14px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>I am Mom (hi)</button>
             </div>
-            {v.confettiOn && (
-              <div style={{position:"fixed",inset:0,pointerEvents:"none",overflow:"hidden"}}>
-                {v.confettiPieces.map((p,i)=>(
-                  <div key={i} style={{position:"absolute",top:0,left:`${p.left}%`,width:"8px",height:"14px",background:p.color,animation:`confettiFall ${p.dur}s ease-in ${p.delay}s forwards`}}></div>
-                ))}
-              </div>
+          </div>
+        )}
+
+        {v.gateStep===2 && (
+          <div>
+            <div style={{fontFamily:"'Bangers',cursive",fontSize:"18px",color:"#ff8a3d",marginBottom:"12px",letterSpacing:"1px"}}>WHAT YEAR WERE YOU BORN? (FOR LEGAL REASONS)</div>
+            {v.gateMomNote && (
+              <div style={{background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"9px 11px",marginBottom:"12px",fontSize:"12.5px",color:"#e8a52a",fontStyle:"italic"}}>{v.gateMomNote}</div>
+            )}
+            <select onChange={(e)=>{v.gateYearSelect(e.target.value); e.target.value="";}} style={{width:"100%",background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"6px",color:"#ffd9b3",fontSize:"14px",padding:"11px",cursor:"pointer"}}>
+              <option value="">— choose a year —</option>
+              {v.gateYearOptions.map(y=>(<option key={y} value={y}>{y}</option>))}
+              <option value="karen">{v.gateKarenYear}</option>
+            </select>
+            {v.gateYearMsg && (
+              <div style={{background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"9px 11px",margin:"12px 0",fontSize:"12.5px",color:"#e8a52a",fontStyle:"italic"}}>{v.gateYearMsg}</div>
+            )}
+            {v.gateRejections>=2 && !v.gateYearOk && (
+              <button onClick={v.gateSkip} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0,marginBottom:"10px",display:"block",margin:"0 auto 10px"}}>Skip (legal)</button>
+            )}
+            {v.gateYearOk && (
+              <button onClick={v.completeGate} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"15px",padding:"13px 20px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>I am 18+, or my older brother is in the other room and said it's fine.</button>
             )}
           </div>
         )}
 
-        {v.tosOpen && (
-          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:150,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
-            <div style={{background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"8px",maxWidth:"560px",maxHeight:"80vh",overflow:"auto",padding:"28px",fontSize:"13px",color:"#d8b79b",lineHeight:1.6}}>
-              <div style={{fontFamily:"'Bangers',cursive",fontSize:"24px",color:"#ff8a3d",marginBottom:"14px"}}>Terms of Service (Excerpts)</div>
-              <p><b style={{color:"#ffb347"}}>Section 1.3 (Identity Verification):</b> To execute a balance withdrawal exceeding $0.00, users must upload a notarized copy of their 4th-grade report card, a signed handwritten letter from their guidance counselor, and physical delivery of three (3) unopened energy drink cans to our P.O. Box in Grand Cayman.</p>
-              <p><b style={{color:"#ffb347"}}>Section 4.1 (Dispute Resolution):</b> All claims, disputes, or losses shall be resolved not in a court of law, but via a mandatory 1v1 Quickscope Match on Rust (Radar Always On, Intervention Only). If the User loses, their account balance is permanently forfeited to site operational overhead.</p>
-              <p><b style={{color:"#ffb347"}}>Section 8.9 (Currency Volatility):</b> SkinCoinz and Banana Bucks hold no real-world monetary value, spiritual value, or intrinsic utility, and may be recalculated at any time based on the server admin's daily mood.</p>
-              <button onClick={v.toggleTos} style={{marginTop:"10px",background:"#ff5a14",border:"none",color:"#2a0e05",fontWeight:800,padding:"10px 18px",borderRadius:"6px",cursor:"pointer"}}>Close (reluctantly)</button>
+        <div style={{marginTop:"16px",fontSize:"10px",color:"#a9705a",lineHeight:1.5}}>This is a satirical parody. No real money, currency, or skins exist here. Nothing on this page has value. Please, for the love of god, log off. (§12.4)</div>
+      </div>
+    );
+
+    const momModal = (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",zIndex:250,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ff5a14",borderRadius:"10px",maxWidth:"440px",width:"100%",padding:"28px",textAlign:"center",boxShadow:"0 0 60px rgba(255,80,20,0.4)"}}>
+          <div style={{fontFamily:"'Bangers',cursive",fontSize:"26px",color:"#ffb347",letterSpacing:"1px",textShadow:"2px 2px 0 #7a1c00"}}>ARE YOU MOM? — VERIFICATION</div>
+          <p style={{color:"#ffd9b3",fontSize:"13px",fontStyle:"italic",margin:"12px 0 18px"}}>Thank you for your interest in being Mom. Please complete the following.</p>
+          {v.momModalMsg && (
+            <div style={{background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"9px 11px",marginBottom:"14px",fontSize:"12.5px",color:"#ffcf9a",fontWeight:700}}>{v.momModalMsg}</div>
+          )}
+          {v.momModalStep===0 && (
+            <div>
+              <div style={{color:"#ffd9b3",fontSize:"13px",marginBottom:"10px",textAlign:"left"}}>What is your child's gamertag?</div>
+              <input value={v.momModalQ1} onChange={e=>v.setMomModalQ1(e.target.value)} style={{width:"100%",boxSizing:"border-box",background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"6px",color:"#ffd9b3",fontSize:"14px",padding:"10px",marginBottom:"12px"}} />
+              <button onClick={v.momModalSubmit} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>Submit</button>
             </div>
+          )}
+          {v.momModalStep===1 && (
+            <div>
+              <div style={{color:"#ffd9b3",fontSize:"13px",marginBottom:"10px",textAlign:"left"}}>A mother would know: what's the password?</div>
+              <input type="password" value={v.momModalQ2} onChange={e=>v.setMomModalQ2(e.target.value)} style={{width:"100%",boxSizing:"border-box",background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"6px",color:"#ffd9b3",fontSize:"14px",padding:"10px",marginBottom:"12px"}} />
+              <button onClick={v.momModalSubmit} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>Submit</button>
+            </div>
+          )}
+          {v.momModalStep===2 && (
+            <div>
+              <label style={{display:"flex",alignItems:"center",gap:"8px",justifyContent:"center",fontSize:"13px",color:"#ffd9b3",marginBottom:"14px",cursor:"pointer"}}>
+                <input type="checkbox" checked={v.momModalCheck} onChange={e=>v.setMomModalCheck(e.target.checked)} />
+                <span>Fine. But this is the last time.</span>
+              </label>
+              <button onClick={v.momModalFinish} disabled={!v.momModalCheck} style={{background:v.momModalCheck?"linear-gradient(180deg,#ff8a3d,#e0480a)":"#3a2010",border:"2px solid #ffcf9a",color:v.momModalCheck?"#2a0e05":"#8a6a52",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:v.momModalCheck?"pointer":"not-allowed",width:"100%"}}>Complete Verification</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+
+    const revealCard = (
+      <div style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ffd54a",borderRadius:"10px",maxWidth:"460px",width:"100%",padding:"32px",textAlign:"center",boxShadow:"0 0 60px rgba(255,213,74,0.35)"}}>
+        <div style={{fontFamily:"'Bangers',cursive",fontSize:"30px",color:"#ffb347",letterSpacing:"1px",textShadow:"2px 2px 0 #7a1c00"}}>IDENTITY ASSIGNED</div>
+        <div style={{margin:"20px 0",fontSize:"15px",color:"#ffd9b3"}}>You are:</div>
+        <div key={v.revealTag} style={{fontFamily:"'Bangers',cursive",fontSize:"30px",color:"#ffd54a",textShadow:"2px 2px 0 #7a1c00,0 0 24px rgba(255,213,74,0.5)",marginBottom:"16px",animation:"tagStamp 0.5s ease-out",overflowWrap:"anywhere"}}>{v.revealTag}</div>
+        <p style={{color:"#d8b79b",fontSize:"11.5px",lineHeight:1.6,margin:"0 0 20px"}}>Usernames are assigned by the house. The house knows best. This identity is non-transferable, non-refundable, and legally distinct from you (see §1.3).</p>
+        <div style={{display:"flex",gap:"10px"}}>
+          <button onClick={v.revealReroll} style={{flex:1,background:"#3a2010",border:"2px dashed #ffd54a",color:"#ffd54a",fontWeight:900,fontSize:"13px",padding:"12px 10px",borderRadius:"8px",cursor:"pointer"}}>Reroll (first one's free)</button>
+          <button onClick={v.acceptFate} style={{flex:1,background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"12px 10px",borderRadius:"8px",cursor:"pointer"}}>Accept fate</button>
+        </div>
+      </div>
+    );
+
+    const tosModal = (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:v.flowPhase==="tos"?210:150,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"8px",maxWidth:"560px",width:"100%",maxHeight:"82vh",display:"flex",flexDirection:"column",padding:"24px 24px 18px",fontSize:"13px",color:"#d8b79b",lineHeight:1.6,boxShadow:"0 0 60px rgba(0,0,0,0.8)"}}>
+          <div style={{fontFamily:"'Bangers',cursive",fontSize:"22px",color:"#ff8a3d",marginBottom:"4px"}}>Terms of Service (Excerpts)</div>
+          <div style={{fontSize:"11px",color:"#8a6a52",fontStyle:"italic",marginBottom:"12px"}}>— a legal document about a fake website</div>
+          <div ref={v.tosScrollRef} onScroll={v.onTosScroll} style={{overflowY:"auto",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"14px 16px",flex:1,minHeight:"0"}}>
+            {v.tosArticles.map((art,ai)=>(
+              <div key={ai} ref={art.art8?v.art8Ref:undefined}>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#ffb347",margin:"16px 0 8px",letterSpacing:"0.5px"}}>{art.title}</div>
+                {art.clauses.map((cl)=>(
+                  <p key={cl.n} style={{margin:"0 0 10px"}}><b style={{color:"#ffb347"}}>{cl.n} ({cl.t}).</b> {cl.b}</p>
+                ))}
+              </div>
+            ))}
+            {v.tosFiller.map((f)=>(
+              <p key={f.n} style={{margin:"0 0 10px",fontSize:f.faint?"6px":undefined,color:f.faint?"#5a4232":undefined}}>
+                <b style={{color:f.faint?"#5a4232":"#8a6a52"}}>{f.n}.</b> {f.body}
+              </p>
+            ))}
+            <div style={{height:"8px"}}></div>
+          </div>
+          <div style={{marginTop:"12px",fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic",textAlign:"center"}}>{v.realityStrap}</div>
+          <div style={{marginTop:"10px",display:"flex",gap:"10px",justifyContent:"center"}}>
+            {v.tosConsent ? (
+              <button onClick={v.acceptTos} disabled={!v.tosAcceptReady} style={{background:v.tosAcceptReady?"linear-gradient(180deg,#8fd97a,#3a9a2a)":"#3a2010",border:"2px solid #cfe4ff",color:v.tosAcceptReady?"#0e2a06":"#8a6a52",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:v.tosAcceptReady?"pointer":"not-allowed",minWidth:"280px"}}>{v.tosMeterLabel}</button>
+            ) : (
+              <button onClick={v.closeTos} style={{background:"#ff5a14",border:"none",color:"#2a0e05",fontWeight:800,padding:"10px 18px",borderRadius:"6px",cursor:"pointer"}}>Close (reluctantly)</button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+
+    const identityPanel = (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:180,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{background:"#1c0d06",border:"2px solid #ffd54a",borderRadius:"8px",maxWidth:"480px",width:"100%",maxHeight:"84vh",overflowY:"auto",padding:"26px",fontSize:"13px",color:"#d8b79b",lineHeight:1.6,boxShadow:"0 0 60px rgba(255,213,74,0.25)"}}>
+          <div style={{fontFamily:"'Bangers',cursive",fontSize:"24px",color:"#ff8a3d",marginBottom:"4px"}}>IDENTITY</div>
+          <div style={{fontSize:"22px",fontFamily:"'Bangers',cursive",color:"#ffd54a",textShadow:"2px 2px 0 #7a1c00",margin:"10px 0 2px",overflowWrap:"anywhere"}}>{v.playerTag}</div>
+          <div style={{fontSize:"10px",color:"#8a6a52",marginBottom:"16px"}}>(you) — assigned by the house. The house knows best.</div>
+
+          <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"16px"}}>
+            <div style={{fontFamily:"'Bangers',cursive",fontSize:"14px",color:"#cf6a32",letterSpacing:"1px",marginBottom:"8px"}}>StatTrak™ Lifetime</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:"4px 12px",fontSize:"12px"}}>
+              <span style={{color:"#a9705a"}}>Banana Bucks lost</span><b style={{color:"#ffb347"}}>{fmtBB(v.statsBBLost)} BB</b>
+              <span style={{color:"#a9705a"}}>Mom's money</span><b style={{color:"#ffb347"}}>${v.statsUSD.toFixed(2)} of Mom's money</b>
+              <span style={{color:"#a9705a"}}>Crates opened</span><b style={{color:"#ffb347"}}>{v.statsCrates}</b>
+              <span style={{color:"#a9705a"}}>Withdrawals pending</span><b style={{color:"#ffb347"}}>{v.statsWithdrawals} (see §1.3)</b>
+              <span style={{color:"#a9705a"}}>Worst single loss</span><b style={{color:"#ffb347"}}>{fmtBB(v.statsWorst)} BB</b>
+              <span style={{color:"#a9705a"}}>Losing streak</span><b style={{color:"#ffb347"}}>{v.statsStreak}</b>
+            </div>
+          </div>
+
+          <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"16px"}}>
+            <div style={{fontSize:"12px",color:"#d8b79b",fontStyle:"italic",marginBottom:"10px"}}>{v.rerollFeeCopy}</div>
+            <button onClick={v.doReroll} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>{v.rerollLabel}</button>
+          </div>
+
+          <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"16px"}}>
+            <div style={{fontSize:"12px",color:"#d8b79b",fontStyle:"italic",marginBottom:"10px",lineHeight:1.5}}>Custom usernames are a premium feature. Standard usernames are free because you get what you pay for.</div>
+            <div style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px"}}>
+              <input value={v.customInput} onChange={e=>v.setCustomInput(e.target.value)} placeholder="Choose a name (3–16 chars)" style={{flex:1,background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"6px",color:"#ffd9b3",fontSize:"13px",padding:"9px 10px",minWidth:"0"}} />
+              <span style={{fontSize:"12px",fontWeight:800,color:v.customAffordable?"#8fd97a":"#e24a4a",whiteSpace:"nowrap"}}>{v.customPrice} OC</span>
+            </div>
+            <button onClick={v.buyCustom} disabled={!v.customAffordable} style={{background:v.customAffordable?"linear-gradient(180deg,#8fd97a,#3a9a2a)":"#3a2010",border:"2px solid #cfe4ff",color:v.customAffordable?"#0e2a06":"#8a6a52",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:v.customAffordable?"pointer":"not-allowed",width:"100%"}}>Buy custom name{v.customAffordable?"":" (insufficient OC)"}</button>
+            <div style={{fontSize:"10px",color:"#8a6a52",marginTop:"8px",fontStyle:"italic"}}>The Compliance Filter applies at no extra charge, mood-based, non-refundable.</div>
+            {v.customMsg && (
+              <div style={{background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"8px 10px",marginTop:"10px",fontSize:"11.5px",color:"#ffcf9a",fontWeight:700}}>{v.customMsg}</div>
+            )}
+          </div>
+
+          <button onClick={v.closeIdentity} style={{background:"#ff5a14",border:"none",color:"#2a0e05",fontWeight:800,padding:"10px 18px",borderRadius:"6px",cursor:"pointer",width:"100%"}}>Close (you)</button>
+        </div>
+      </div>
+    );
+
+    return (
+      <div style={{fontFamily:"Arial,Helvetica,sans-serif",background:"radial-gradient(circle at 50% -10%,#3a1206,#160805 60%)",minHeight:"100vh",color:"#ffe9d6",position:"relative"}}>
+
+        {(v.flowPhase==="gate"||v.flowPhase==="reveal"||v.flowPhase==="tos") && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+            {v.flowPhase==="gate" && gateCard}
+            {v.flowPhase==="reveal" && revealCard}
           </div>
         )}
 
-        {v.panicActive && (
-          <div style={{position:"fixed",inset:0,background:"#fff",color:"#202122",zIndex:300,overflow:"auto",fontFamily:"Georgia,serif",padding:"40px 60px"}}>
-            <div style={{maxWidth:"720px",margin:"0 auto"}}>
-              <div style={{fontSize:"12px",color:"#3366cc",marginBottom:"10px"}}>Wikipedia, the free encyclopedia</div>
-              <h1 style={{fontFamily:"Georgia,serif",fontWeight:400,borderBottom:"1px solid #a2a9b1",paddingBottom:"6px"}}>Linear equation</h1>
-              <p style={{lineHeight:1.7,fontSize:"15px"}}>In mathematics, an <b>linear equation</b> is an equation that may be put in the form <i>a<sub>1</sub>x<sub>1</sub> + ... + a<sub>n</sub>x<sub>n</sub> + b = 0</i>, where <i>x<sub>1</sub>, ..., x<sub>n</sub></i> are the variables, and <i>b, a<sub>1</sub>, ..., a<sub>n</sub></i> are the coefficients, which are often real numbers.</p>
-              <p style={{lineHeight:1.7,fontSize:"15px"}}>The most common form is the <b>slope-intercept form</b>, written as <i>y = mx + b</i>, where <i>m</i> is the slope and <i>b</i> is the y-intercept.</p>
-              <h2 style={{fontFamily:"Georgia,serif",fontWeight:400,borderBottom:"1px solid #a2a9b1",paddingBottom:"6px"}}>Contents</h2>
-              <p style={{lineHeight:1.7,fontSize:"15px",color:"#54595d"}}>1 Forms &nbsp; 2 Graphing &nbsp; 3 Systems &nbsp; 4 See also</p>
-              <button onClick={v.togglePanic} style={{marginTop:"20px",background:"#eee",border:"1px solid #ccc",padding:"10px 16px",borderRadius:"4px",cursor:"pointer",fontFamily:"Arial"}}>Close (she's gone)</button>
-            </div>
+        {v.momModalOpen && momModal}
+        {v.tosOpen && tosModal}
+        {v.identityOpen && identityPanel}
+
+        {v.toast && (
+          <div style={{position:"fixed",top:"18px",left:"50%",transform:"translateX(-50%)",zIndex:400,display:"flex",alignItems:"center",gap:"12px",background:"#241005",border:"2px solid #ffd54a",borderRadius:"8px",padding:"12px 16px",maxWidth:"480px",boxShadow:"0 6px 24px rgba(0,0,0,0.7)"}}>
+            <div style={{fontSize:"12.5px",color:"#ffd54a",fontWeight:700,lineHeight:1.5}}>{v.toast.text}</div>
+            {v.toast.dismiss && (
+              <button onClick={v.dismissToast} style={{background:"#ffd54a",border:"none",color:"#2a0e05",fontWeight:900,fontSize:"10.5px",padding:"7px 10px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap"}}>{v.toast.dismiss}</button>
+            )}
+          </div>
+        )}
+
+        {v.confettiOn && (
+          <div style={{position:"fixed",inset:0,pointerEvents:"none",overflow:"hidden",zIndex:500}}>
+            {v.confettiPieces.map((p,i)=>(
+              <div key={i} style={{position:"absolute",top:0,left:`${p.left}%`,width:"8px",height:"14px",background:p.color,animation:`confettiFall ${p.dur}s ease-in ${p.delay}s forwards`}}></div>
+            ))}
           </div>
         )}
 
@@ -385,6 +872,12 @@ class App extends React.Component {
                     </div>
                   )}
                 </div>
+                {v.playerTag && (
+                  <div onClick={v.openIdentity} title="Identity" style={{display:"flex",alignItems:"center",gap:"6px",background:"#0e0a06",border:"1px solid #ffd54a",borderRadius:"6px",padding:"7px 12px",cursor:"pointer",whiteSpace:"nowrap"}}>
+                    <b style={{color:"#ffd54a",fontSize:"12px"}}>{v.playerTag}</b>
+                    <span style={{color:"#8a6a52",fontSize:"10px"}}>(you)</span>
+                  </div>
+                )}
               </div>
               {v.moodLine && <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic",whiteSpace:"nowrap"}}>{v.moodLine}</div>}
             </div>
@@ -449,15 +942,15 @@ class App extends React.Component {
                     <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"14px"}}>Skin Coinflip</div>
                     <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"40px",padding:"20px 0"}}>
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>You</div>
-                        <div style={{width:"64px",height:"64px",borderRadius:"50%",background:"linear-gradient(160deg,#4a90e2,#2a5fa8)",border:"3px solid #cfe4ff"}}></div>
+                        <div style={{fontSize:"12px",color:v.youColor,fontWeight:800,marginBottom:"6px",maxWidth:"120px",overflowWrap:"anywhere"}}>{v.playerTag || "You"}</div>
+                        <div style={{width:"64px",height:"64px",margin:"0 auto",borderRadius:"50%",background:"linear-gradient(160deg,#4a90e2,#2a5fa8)",border:"3px solid #cfe4ff"}}></div>
                       </div>
                       <div style={{perspective:"400px"}}>
                         <div style={{width:"70px",height:"70px",borderRadius:"50%",background:"linear-gradient(160deg,#ffd54a,#c9960a)",border:"3px solid #fff2c9",transformStyle:"preserve-3d",animation:v.coinAnim}}></div>
                       </div>
                       <div style={{textAlign:"center"}}>
                         <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>AdminTradeBot_69</div>
-                        <div style={{width:"64px",height:"64px",borderRadius:"50%",background:"linear-gradient(160deg,#e24a4a,#a82a2a)",border:"3px solid #ffcfcf"}}></div>
+                        <div style={{width:"64px",height:"64px",margin:"0 auto",borderRadius:"50%",background:"linear-gradient(160deg,#e24a4a,#a82a2a)",border:"3px solid #ffcfcf"}}></div>
                       </div>
                     </div>
                     {v.coinResult && (
@@ -561,13 +1054,13 @@ class App extends React.Component {
                 <div style={{border:"1px solid #4a6a3a",borderRadius:"4px",padding:"5px 9px",fontSize:"9px",color:"#8fd97a",background:"#0e0a06"}}>AGE VERIFIED*</div>
                 <div style={{border:"1px solid #4a6a3a",borderRadius:"4px",padding:"5px 9px",fontSize:"9px",color:"#8fd97a",background:"#0e0a06"}}>CERTIFIED FAIR*</div>
               </div>
-              <button onClick={v.toggleTos} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0,display:"block",marginBottom:"8px"}}>Terms of Service (please don't read this)</button>
+              <button onClick={v.openTos} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0,display:"block",marginBottom:"8px"}}>{v.tosFooterLabel}</button>
               <div style={{fontSize:"9.5px",color:"#6a4a38",lineHeight:1.6}}>*This is a satirical, non-functional parody. No wagering, currency, or item ever holds real value. Nothing here is licensed, provably anything, or fair. Please close this tab and go outside.</div>
             </div>
           </div>
         </div>
 
-        <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite"}}>MOM'S HOME</button>
+        <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:v.momsGlow?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
 
       </div>
     );
