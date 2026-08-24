@@ -32,3 +32,9 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Burn-down**: how quickly a session's starting grant is lost to the house.
 - **The house**: the site itself; it always wins eventually.
 - **MOM'S HOME**: the panic affordance masking the site as homework.
+- **As scheduled**: the crash game's canonical disclaimer — every outcome was scripted at click-time; the schedule is never disclosed (ToS §2.4).
+- **Near-miss plateau ("the stick")**: the scripted moment a crash run freezes at 2.4x–2.9x to make cashing out feel possible; it never is.
+- **Cash-out exhaustion**: the scripted point (7 dodges in) where the cash-out button stops evading — the only clickable moment, and the carrier of the session's one character win.
+- **Character win**: the single successful cash-out per session, fee-shaved to at most +1 BB net; everyone wins once (it builds character, ToS §2.4).
+- **Fund name ladder**: the escalating college-fund labels given to consecutive crash runs (Semester 1 → Mom's Retirement).
+- **Consolation rebate**: the 5 BB credited every third consecutive crash; non-withdrawable and deliberately too small to re-enter play alone.
