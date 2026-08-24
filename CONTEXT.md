@@ -19,3 +19,10 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Burn-down**: how quickly a session's starting grant is lost to the house.
 - **The house**: the site itself; it always wins eventually.
 - **MOM'S HOME**: the panic affordance masking the site as homework.
+- **Loot Crate Defuser**: the crate surface — a "defusing" ceremony that always ends in a Stock JPEG, never an opening.
+- **Stock JPEG**: the crate's only real award class — royalty-free imagery wearing full rarity tiers; non-tradeable, cash value $0.00.
+- **Pity Meter**: the prominently displayed "guaranteed Rare-or-better" counter that recalibrates before it can ever pay out; doubles as duplicate-protection progress.
+- **Recalibration**: the house's word for any counter, rate, or promise resetting itself (§8.9).
+- **DupeShield™**: duplicate-protection theater — duplicate awards are "recycled" into Environmental Credits, which are always zero after rounding.
+- **Consolation Key™**: the free key awarded after three consecutive losses; the loss-leader on-ramp into crate play.
+- **Daily Mom Key**: the drip-fed free key that "arrives from Mom" once a day; claiming it builds the streak.
