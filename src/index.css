@@ -52,6 +52,10 @@ body {
   0%, 100% { box-shadow: 0 0 8px 2px rgba(255, 90, 20, 0.5); }
   50% { box-shadow: 0 0 20px 6px rgba(255, 90, 20, 0.9); }
 }
+@keyframes topUpGlow {
+  0%, 100% { box-shadow: 0 0 6px 2px rgba(143, 217, 122, 0.4); }
+  50% { box-shadow: 0 0 18px 6px rgba(143, 217, 122, 0.95); }
+}
 
 /* Tab on the "PROVABLY FAIR" badge (style-before in the original artifact) */
 .fair-badge {

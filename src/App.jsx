@@ -1,4 +1,13 @@
 import React from 'react'
+import { Mood } from "./spine/mood.js";
+import { Bus, EVENTS, Regime } from "./spine/bus.js";
+import "./spine/vault.js";
+import "./spine/band.js";
+import {
+  GAME_PRICES_BB, MATERNAL_STARTER_GRANT_BB, DESPERATION_THRESHOLD_BB,
+  V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE,
+  NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY, TOP_UP_PLACEHOLDER_COPY
+} from "./spine/constants.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -43,11 +52,17 @@ const CATALOG = [
 ];
 const ROULETTE_STRIP = Array.from({length:20},(_,i)=>{const it=CATALOG[i%CATALOG.length];return {short:it.name.split("|")[0].trim(),color:RARITY_COLORS[it.rarity]||"#ff8a3d",image:SKIN_IMAGES[it.id]};});
 
+function fmtBB(bb){
+  if (!Number.isFinite(bb)) return "0";
+  return String(parseFloat(bb.toFixed(2)));
+}
+
 class App extends React.Component {
   state = {
     ageVerified:false, confettiOn:false, confettiPieces:[],
     tosOpen:false, panicActive:false,
-    activeTab:"roulette", balanceBB:0.0004, insufficientMsg:null,
+    activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
+    moodWord:null, denomsOpen:false, topUpNote:false,
     ticker:[], chat:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
     coinFlipping:false, coinResult:null,
@@ -56,17 +71,35 @@ class App extends React.Component {
   };
 
   componentDidMount() {
+    let balance = MATERNAL_STARTER_GRANT_BB;
+    let returning = false;
     try {
-      const saved = localStorage.getItem("hfes_balance");
+      const saved = localStorage.getItem("hfes_balance_bb");
+      const legacy = localStorage.getItem("hfes_balance");
       const age = localStorage.getItem("hfes_age");
-      if (saved) this.setState({balanceBB: parseFloat(saved)});
+      if (saved !== null) {
+        const v = parseFloat(saved);
+        balance = Number.isFinite(v) && v >= 0 ? v : MATERNAL_STARTER_GRANT_BB;
+        returning = true;
+      } else if (legacy !== null) {
+        const v = parseFloat(legacy);
+        balance = Number.isFinite(v) ? Math.max(0, v*LEGACY_TO_WHOLE_BB_SCALE) : MATERNAL_STARTER_GRANT_BB;
+        returning = true;
+        localStorage.removeItem("hfes_balance");
+      }
       if (age === "1") this.setState({ageVerified:true});
     } catch(e){}
+    this.setState({balanceBB:balance});
+    this.saveBalance(balance);
+    this._offMood = Mood.onChange(({word})=>this.setState({moodWord:word}));
+    Mood.init();
+    Bus.emit(EVENTS.SESSION_STARTED, {returning});
+    Regime.evaluate(balance);
     this.scheduleTicker();
     this.scheduleChat();
   }
 
-  saveBalance(v){ try{localStorage.setItem("hfes_balance", String(v));}catch(e){} }
+  saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
 
   scheduleTicker(){
     const delay = 2000 + Math.random()*2000;
@@ -88,9 +121,9 @@ class App extends React.Component {
   componentWillUnmount(){
     clearTimeout(this._tTimer); clearTimeout(this._cTimer);
     clearInterval(this._crashInt); clearInterval(this._crateInt);
+    clearTimeout(this._insTimer); clearTimeout(this._topUpTimer);
+    if (this._offMood) this._offMood();
   }
-
-  usdToBB(usd){ return usd*0.003; }
 
   verify(){
     try{ localStorage.setItem("hfes_age","1"); }catch(e){}
@@ -102,24 +135,40 @@ class App extends React.Component {
   toggleTos(){ this.setState(s=>({tosOpen:!s.tosOpen})); }
   togglePanic(){ this.setState(s=>({panicActive:!s.panicActive})); }
 
-  flashInsufficient(){
-    this.setState({insufficientMsg:"Insufficient Banana Bucks. Please ask Mom (see Terms of Service, Section 1.3)."});
-    setTimeout(()=>this.setState({insufficientMsg:null}), 2600);
+  flashInsufficient(failures){
+    this.setState({insufficientMsg: failures >= 3 ? INSUFFICIENT_FUNDS_ESCALATION_COPY : INSUFFICIENT_FUNDS_COPY});
+    clearTimeout(this._insTimer);
+    this._insTimer = setTimeout(()=>this.setState({insufficientMsg:null}), 2600);
   }
 
-  spendUSD(usd){
-    const cost = this.usdToBB(usd);
-    if (this.state.balanceBB < cost){ this.flashInsufficient(); return false; }
+  spendBB(surface){
+    const cost = GAME_PRICES_BB[surface];
+    if (!(this.state.balanceBB >= cost)) {
+      const n = this.state.sessionSpendFailures + 1;
+      this.setState({sessionSpendFailures:n});
+      this.flashInsufficient(n);
+      Bus.emit(EVENTS.SPEND_FAILED, {surface, costBB:cost, sessionFailures:n});
+      return false;
+    }
     const nb = this.state.balanceBB - cost;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
+    Bus.emit(EVENTS.BB_SPENT, {amount:cost, reason:surface});
+    Regime.evaluate(nb);
     return true;
+  }
+
+  nextRoundId(){ this._roundSeq = (this._roundSeq||0)+1; return this._roundSeq; }
+  settleRound(surface, roundId, kind){
+    Bus.emit(EVENTS.ROUND_SETTLED, {surface, roundId, wagered:true, priceBB:GAME_PRICES_BB[surface], netBB:-GAME_PRICES_BB[surface], kind});
   }
 
   setTab(tab){ this.setState({activeTab:tab}); }
 
   playRoulette(){
     if (this.state.rouletteSpinning) return;
-    if (!this.spendUSD(2.50)) return;
+    if (!this.spendBB("roulette")) return;
+    const roundId = this.nextRoundId();
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"roulette", roundId, priceBB:GAME_PRICES_BB.roulette, wagered:true});
     const finalOffset = -(2800 + Math.floor(Math.random()*300));
     this.setState({rouletteSpinning:true, rouletteResult:null, rouletteOffset:0, rouletteTransition:"none"});
     requestAnimationFrame(()=>{
@@ -127,23 +176,29 @@ class App extends React.Component {
     });
     setTimeout(()=>{
       this.setState({rouletteSpinning:false, rouletteResult:"HOUSE WINS: FEE ASSESSED. Better luck never."});
-      this.setState(s=>({ticker:["You lost $2.50 to the house (shocking)", ...s.ticker].slice(0,8)}));
+      this.settleRound("roulette", roundId, "house-win");
+      this.setState(s=>({ticker:["You lost "+GAME_PRICES_BB.roulette+" BB to the house (shocking)", ...s.ticker].slice(0,8)}));
     }, 5300);
   }
 
   playCoinflip(){
     if (this.state.coinFlipping) return;
-    if (!this.spendUSD(1.00)) return;
+    if (!this.spendBB("coinflip")) return;
+    const roundId = this.nextRoundId();
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"coinflip", roundId, priceBB:GAME_PRICES_BB.coinflip, wagered:true});
     this.setState({coinFlipping:true, coinResult:null});
     setTimeout(()=>{
       this.setState({coinFlipping:false, coinResult:"The coin landed on its edge. Tie goes to the server host."});
-      this.setState(s=>({ticker:["Admin_TradeBot_69 collects the edge-case bounty", ...s.ticker].slice(0,8)}));
+      this.settleRound("coinflip", roundId, "edge");
+      this.setState(s=>({ticker:["AdminTradeBot_69 collects the edge-case bounty", ...s.ticker].slice(0,8)}));
     }, 2000);
   }
 
   startCrash(){
     if (this.state.crashRunning) return;
-    if (!this.spendUSD(5.00)) return;
+    if (!this.spendBB("crash")) return;
+    const roundId = this.nextRoundId();
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"crash", roundId, priceBB:GAME_PRICES_BB.crash, wagered:true});
     this.setState({crashRunning:true, crashMult:1.00, crashCrashed:false, crashResult:null, cashoutDodge:0});
     const stopAt = 2000 + Math.random()*4000;
     this._crashInt = setInterval(()=>{
@@ -153,6 +208,7 @@ class App extends React.Component {
       clearInterval(this._crashInt);
       const finalMult = Math.random() < 0.5 ? 0.00 : 1.01;
       this.setState({crashRunning:false, crashCrashed:true, crashMult:finalMult, crashResult:"CRASHED at "+finalMult.toFixed(2)+"x. Cash-out was evaded "+this.state.cashoutDodge+" time(s)."});
+      this.settleRound("crash", roundId, "house-win");
       this.setState(s=>({ticker:["The College Fund crashed at "+finalMult.toFixed(2)+"x (as scheduled)", ...s.ticker].slice(0,8)}));
     }, stopAt);
   }
@@ -165,7 +221,9 @@ class App extends React.Component {
   }
 
   buyKey(){
-    if (!this.spendUSD(4.99)) return;
+    if (!this.spendBB("crates")) return;
+    this._crateRound = this.nextRoundId();
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"crates", roundId:this._crateRound, priceBB:GAME_PRICES_BB.crates, wagered:true});
     this.setState({crateKeyBought:true});
   }
   openCrate(){
@@ -184,14 +242,21 @@ class App extends React.Component {
       const awards = ["Generic Stock Photo of Handshake.jpg (Non-Tradeable)","Royalty-Free Sunset Over Water.jpg (Non-Tradeable)","Clip Art of a Trophy.png (Non-Tradeable)","Stock Photo of Confused Businessman.jpg (Non-Tradeable)"];
       const a = awards[Math.floor(Math.random()*awards.length)];
       this.setState({crateOpening:false, crateProgress:100, crateResult:"Crate defused. You received: "+a, crateKeyBought:false});
+      this.settleRound("crates", this._crateRound, "key-defused");
       this.setState(s=>({ticker:["A crate was opened. A JPEG was awarded. Nobody won.", ...s.ticker].slice(0,8)}));
     }, total);
+  }
+
+  showTopUpNote(){
+    this.setState({topUpNote:true});
+    clearTimeout(this._topUpTimer);
+    this._topUpTimer = setTimeout(()=>this.setState({topUpNote:false}), 2600);
   }
 
   renderVals(){
     const s = this.state;
     const bb = s.balanceBB;
-    const usd = bb/0.003, sc = bb*(1.7/0.003), vg = bb*(120/0.003);
+    const vg = bb*V_GEMS_PER_BB, sc = bb*SKINCOINZ_PER_BB;
     const tabs = ["roulette","coinflip","crash","crates"];
     const tabBg = {}, tabColor = {};
     tabs.forEach(t=>{ const on = s.activeTab===t; tabBg[t]= on ? "linear-gradient(160deg,#3a1206,#2a0d05)" : "#1a0d05"; tabColor[t]= on ? "#ffb347" : "#a9705a"; });
@@ -201,7 +266,12 @@ class App extends React.Component {
       tosOpen:s.tosOpen, toggleTos:()=>this.toggleTos(),
       panicActive:s.panicActive, togglePanic:()=>this.togglePanic(),
       mainBlurFilter: s.panicActive ? "blur(4px)" : "none",
-      usdDisplay:"$"+usd.toFixed(2), vgDisplay:vg.toFixed(1), scDisplay:sc.toFixed(4), bbDisplay:bb.toFixed(4),
+      bbDisplay:fmtBB(bb), ocDisplay:"0",
+      vgDisplay:Math.round(vg).toLocaleString("en-US"), scDisplay:sc.toFixed(2),
+      moodLine: s.moodWord ? ("Today's mood: "+s.moodWord+" — rates recalculated per §8.9") : "",
+      showNag: bb < DESPERATION_THRESHOLD_BB, nagCopy:NAG_LOW_BB_COPY,
+      denomsOpen:s.denomsOpen, openDenoms:()=>this.setState({denomsOpen:true}), closeDenoms:()=>this.setState({denomsOpen:false}),
+      topUpNote:s.topUpNote, topUp:()=>this.showTopUpNote(), topUpCopy:TOP_UP_PLACEHOLDER_COPY,
       insufficientMsg:s.insufficientMsg,
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
@@ -212,18 +282,19 @@ class App extends React.Component {
       setTab_crash:()=>this.setTab("crash"), setTab_crates:()=>this.setTab("crates"),
       rouletteStrip:ROULETTE_STRIP, rouletteOffset:s.rouletteOffset, rouletteTransition:s.rouletteTransition,
       rouletteSpinning:s.rouletteSpinning, rouletteResult:s.rouletteResult, playRoulette:()=>this.playRoulette(),
-      rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : "Spin ($2.50)",
+      rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : ("Spin ("+GAME_PRICES_BB.roulette+" BB)"),
       coinFlipping:s.coinFlipping, coinResult:s.coinResult, playCoinflip:()=>this.playCoinflip(),
-      coinBtnLabel: s.coinFlipping ? "Flipping..." : "Flip ($1.00)",
+      coinBtnLabel: s.coinFlipping ? "Flipping..." : ("Flip ("+GAME_PRICES_BB.coinflip+" BB)"),
       coinAnim: s.coinFlipping ? "coinFlip 2s ease-in-out" : "none",
       crashRunning:s.crashRunning, crashResult:s.crashResult, startCrash:()=>this.startCrash(),
-      crashStartLabel: s.crashRunning ? "Running..." : "Start Run ($5.00)",
+      crashStartLabel: s.crashRunning ? "Running..." : ("Start Run ("+GAME_PRICES_BB.crash+" BB)"),
       crashMultDisplay: s.crashMult.toFixed(2)+"x",
       crashColor: s.crashCrashed ? "#ff4444" : "#8fd97a",
       crashBarHeight: Math.min(95, (s.crashMult-1)*40),
       dodgeCashout:()=>this.dodgeCashout(), cashoutDodge:s.cashoutDodge,
       cashoutColor: s.crashRunning ? "#ffcf9a" : "#5a4232",
       crateKeyBought:s.crateKeyBought, buyKey:()=>this.buyKey(),
+      crateBtnLabel: "Buy Virtual Key ("+GAME_PRICES_BB.crates+" BB)",
       crateOpening:s.crateOpening, crateProgress:Math.round(s.crateProgress), openCrate:()=>this.openCrate(),
       crateOpenLabel: s.crateOpening ? "Opening... (unskippable)" : "Open Crate",
       crateResult:s.crateResult,
@@ -272,8 +343,8 @@ class App extends React.Component {
             <div style={{maxWidth:"720px",margin:"0 auto"}}>
               <div style={{fontSize:"12px",color:"#3366cc",marginBottom:"10px"}}>Wikipedia, the free encyclopedia</div>
               <h1 style={{fontFamily:"Georgia,serif",fontWeight:400,borderBottom:"1px solid #a2a9b1",paddingBottom:"6px"}}>Linear equation</h1>
-              <p style={{lineHeight:1.7,fontSize:"15px"}}>In mathematics, a <b>linear equation</b> is an equation that may be put in the form <i>a<sub>1</sub>x<sub>1</sub> + ... + a<sub>n</sub>x<sub>n</sub> + b = 0</i>, where <i>x<sub>1</sub>, ..., x<sub>n</sub></i> are the variables, and <i>b, a<sub>1</sub>, ..., a<sub>n</sub></i> are the coefficients, which are often real numbers.</p>
-              <p style={{lineHeight:1.7,fontSize:"15px"}}>The most common form is the <b>slope-intercept form</b>, written as <i>y = mx + b</i>, where <i>m</i> is the slope of the line and <i>b</i> is the y-intercept.</p>
+              <p style={{lineHeight:1.7,fontSize:"15px"}}>In mathematics, an <b>linear equation</b> is an equation that may be put in the form <i>a<sub>1</sub>x<sub>1</sub> + ... + a<sub>n</sub>x<sub>n</sub> + b = 0</i>, where <i>x<sub>1</sub>, ..., x<sub>n</sub></i> are the variables, and <i>b, a<sub>1</sub>, ..., a<sub>n</sub></i> are the coefficients, which are often real numbers.</p>
+              <p style={{lineHeight:1.7,fontSize:"15px"}}>The most common form is the <b>slope-intercept form</b>, written as <i>y = mx + b</i>, where <i>m</i> is the slope and <i>b</i> is the y-intercept.</p>
               <h2 style={{fontFamily:"Georgia,serif",fontWeight:400,borderBottom:"1px solid #a2a9b1",paddingBottom:"6px"}}>Contents</h2>
               <p style={{lineHeight:1.7,fontSize:"15px",color:"#54595d"}}>1 Forms &nbsp; 2 Graphing &nbsp; 3 Systems &nbsp; 4 See also</p>
               <button onClick={v.togglePanic} style={{marginTop:"20px",background:"#eee",border:"1px solid #ccc",padding:"10px 16px",borderRadius:"4px",cursor:"pointer",fontFamily:"Arial"}}>Close (she's gone)</button>
@@ -294,13 +365,34 @@ class App extends React.Component {
                 <span style={{fontSize:"10px",color:"#8fd97a",fontWeight:700,letterSpacing:"0.5px"}}>PROVABLY FAIR</span>
               </div>
             </div>
-            <div style={{display:"flex",gap:"10px",flexWrap:"wrap",fontSize:"12px"}}>
-              <div style={{background:"#0e0a06",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 12px"}}><span style={{color:"#8a6a52"}}>USD</span> <b style={{color:"#ffe9d6"}}>{v.usdDisplay}</b></div>
-              <div style={{background:"#0e0a06",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 12px"}}><span style={{color:"#8a6a52"}}>V-Gems</span> <b style={{color:"#ffe9d6"}}>{v.vgDisplay}</b></div>
-              <div style={{background:"#0e0a06",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 12px"}}><span style={{color:"#8a6a52"}}>SkinCoinz</span> <b style={{color:"#ffe9d6"}}>{v.scDisplay}</b></div>
-              <div style={{background:"#0e0a06",border:"1px solid #ffb347",borderRadius:"6px",padding:"7px 12px"}}><span style={{color:"#8a6a52"}}>Banana Bucks</span> <b style={{color:"#ffb347"}}>{v.bbDisplay}</b></div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:"6px"}}>
+              <div style={{display:"flex",gap:"10px",flexWrap:"wrap",fontSize:"12px",alignItems:"stretch"}}>
+                <div style={{background:"#0e0a06",border:"1px solid #ffb347",borderRadius:"6px",padding:"7px 12px"}}><span style={{color:"#8a6a52"}}>BB</span> <b style={{color:"#ffb347"}}>{v.bbDisplay}</b></div>
+                <div style={{display:"flex",alignItems:"center",gap:"8px",background:"#0e0a06",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 12px",position:"relative"}}>
+                  <span style={{whiteSpace:"nowrap"}}><span style={{color:"#8a6a52"}}>OC</span> <b style={{color:"#ffe9d6"}}>{v.ocDisplay}</b></span>
+                  <button onClick={v.topUp} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"11px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",animation:"topUpGlow 1.8s infinite",whiteSpace:"nowrap"}}>+ Top Up</button>
+                  {v.topUpNote && (
+                    <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,background:"#241005",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 10px",fontSize:"11px",color:"#a9705a",whiteSpace:"nowrap",zIndex:60,boxShadow:"0 4px 16px rgba(0,0,0,0.6)"}}>{v.topUpCopy}</div>
+                  )}
+                </div>
+                <div onMouseEnter={v.openDenoms} onMouseLeave={v.closeDenoms} style={{position:"relative",display:"flex",alignItems:"center",background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"7px 12px",cursor:"help",color:"#a9705a",whiteSpace:"nowrap"}}>
+                  <span>ⓘ other denominations</span>
+                  {v.denomsOpen && (
+                    <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"10px 12px",fontSize:"11px",color:"#d8b79b",lineHeight:1.7,whiteSpace:"nowrap",zIndex:60,boxShadow:"0 4px 16px rgba(0,0,0,0.6)"}}>
+                      <div>V-Gems <b style={{color:"#ffe9d6"}}>{v.vgDisplay}</b></div>
+                      <div>SkinCoinz <b style={{color:"#ffe9d6"}}>{v.scDisplay}</b></div>
+                      <div>Cash Value (est.): <b style={{color:"#8fd97a"}}>$0.00</b></div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {v.moodLine && <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic",whiteSpace:"nowrap"}}>{v.moodLine}</div>}
             </div>
           </div>
+
+          {v.showNag && (
+            <div style={{background:"#3a2a10",borderBottom:"1px solid #ffd54a",color:"#ffd54a",textAlign:"center",fontSize:"13px",padding:"8px",fontWeight:700,fontStyle:"italic"}}>{v.nagCopy}</div>
+          )}
 
           {v.insufficientMsg && (
             <div style={{background:"#5a1a0a",color:"#ffcf9a",textAlign:"center",fontSize:"13px",padding:"8px",fontWeight:700}}>{v.insufficientMsg}</div>
@@ -364,7 +456,7 @@ class App extends React.Component {
                         <div style={{width:"70px",height:"70px",borderRadius:"50%",background:"linear-gradient(160deg,#ffd54a,#c9960a)",border:"3px solid #fff2c9",transformStyle:"preserve-3d",animation:v.coinAnim}}></div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>Admin_TradeBot_69</div>
+                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>AdminTradeBot_69</div>
                         <div style={{width:"64px",height:"64px",borderRadius:"50%",background:"linear-gradient(160deg,#e24a4a,#a82a2a)",border:"3px solid #ffcfcf"}}></div>
                       </div>
                     </div>
@@ -405,7 +497,7 @@ class App extends React.Component {
                       </div>
                       <div style={{flex:1,minWidth:"220px"}}>
                         {!v.crateKeyBought && (
-                          <button onClick={v.buyKey} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>Buy Virtual Key ($4.99)</button>
+                          <button onClick={v.buyKey} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateBtnLabel}</button>
                         )}
                         {v.crateKeyBought && (
                           <>
