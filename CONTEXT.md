@@ -69,3 +69,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Homework disguise**: the essay-styled mask surface — generated title, live word count, a grade, and no way to export; the homework is itself a fake win.
 - **Suspicion ladder**: the escalation of Mom's suspicion with repeat panic presses each day, from clean essay to "Close (she knows)".
 - **Hush Gratuity**: the 1 BB maternal levy quietly deducted on every panic restore — customary, not required, automatically applied.
+- **Live-Wins ticker**: the fabricated social-proof sidebar feed; every win in it is fiction, denominated just above your balance.
+- **Ambient win**: a fabricated win attributed to a generated stranger — the population the player can't be distinguished from.
+- **Win laundering**: the recycling of the player's real losses into strangers' ticker wins within 60 seconds.
+- **Near-miss re-attribution**: the stranger who wins the exact item the player just nearly won, on camera, in the feed.
+- **Karambit**: the site's greatest prize; exists only in the ticker — never in a catalog, reel, or inventory — and is therefore unwinnable by construction.
+- **Anchor rule**: every fabricated win is denominated slightly above the player's current balance; the poorer you are, the smaller and more attainable the lies.
+- **Desperation Mode**: the ticker regime below 6 BB — junk wins suppressed, jackpots doubled, and the header flips to "everyone is winning except you*".
+- **Rigged calendar**: MOMCODE_MIKE's scripted win schedule — a standing slot every 10 minutes plus a burst the moment the deposit flow opens.
