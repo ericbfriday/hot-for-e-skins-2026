@@ -18,4 +18,7 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Gamertag**: the generated anonymous session identity, persisted locally and featured in the ticker and chat.
 - **Burn-down**: how quickly a session's starting grant is lost to the house.
 - **The house**: the site itself; it always wins eventually.
-- **MOM'S HOME**: the panic affordance masking the site as homework.
+- **MOM'S HOME**: the panic affordance masking the site as the Homework disguise; the site's only frictionless exit — which is the point, since hiding is not leaving.
+- **Homework disguise**: the essay-styled mask surface — generated title, live word count, a grade, and no way to export; the homework is itself a fake win.
+- **Suspicion ladder**: the escalation of Mom's suspicion with repeat panic presses each day, from clean essay to "Close (she knows)".
+- **Hush Gratuity**: the 1 BB maternal levy quietly deducted on every panic restore — customary, not required, automatically applied.
