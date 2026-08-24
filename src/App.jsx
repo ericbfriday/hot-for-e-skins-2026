@@ -407,7 +407,7 @@ class App extends React.Component {
       abandonedCount: s.abandonedCount || 0,
       toasts:s.toasts, dismissToast:(id)=>this.dismissToast(id),
       insufficientMsg:s.insufficientMsg,
-      askmom: s.askmom, panicActive:s.panicActive,
+      askmom: s.askmom,
       askmomHooks: {
         close:(res)=>this.closeAskMom(res),
         creditOC:(oc,bonus)=>this.creditOC(oc,bonus),
