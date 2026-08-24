@@ -6,6 +6,7 @@ import "./spine/band.js";
 import { Identity, generateTag, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
 import { Consent } from "./spine/consent.js";
 import AskMomFlow from "./askmom/AskMomFlow.jsx";
+import ChatPanel from "./chat/ChatPanel.jsx";
 import {
   loadOC, saveOC, loadBonus, saveBonus, clearBonus, loadDepositStats,
 } from "./askmom/session.js";
@@ -34,15 +35,6 @@ const WIN_TEMPLATES = [
   "{n} is now VIP Bronze Tier 7 (spent $340 this week)",
   "{n} defeated the house (this has never happened)",
   "Server admin recalculated {n}'s balance based on mood"
-];
-const CHAT_LINES = [
-  {user:"MOD_Chad_Official", msg:"remember to deposit responsibly!! (deposit more)", color:"#8fd97a"},
-  {user:"xX_QuickScope_Xx", msg:"just won huge trust me bro", color:"#ff8a3d"},
-  {user:"TotallyRealUser42", msg:"is this site legit? asking for a minor", color:"#e8c9ac"},
-  {user:"AdminTradeBot_69", msg:"gg no re", color:"#e24a4a"},
-  {user:"yeetmaster3000", msg:"my mom found my card statement send help", color:"#e8c9ac"},
-  {user:"NotABot_Trust", msg:"BUY KEYS BUY KEYS BUY KEYS", color:"#ffd54a"},
-  {user:"GrandmasCreditCard", msg:"who keeps charging $4.99 to this card", color:"#e8c9ac"}
 ];
 const RARITY_COLORS = {"Covert Extravagance":"#ff4444","Consumer Grade Trash":"#8a8a8a","Contraband Liability":"#e0a800","Mil-Spec Regret":"#4a90e2","Classified Overdraft":"#a24ae2","Industrial Denial":"#4aa8c9"};
 const CATALOG = [
@@ -185,7 +177,7 @@ class App extends React.Component {
     activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
     moodWord:null, denomsOpen:false,
     balanceOC:0, bonusOC:null, askmom:null, toasts:[], ocFly:null, cooldown:null, streakChip:null, abandonedCount:0,
-    ticker:[], chat:[],
+    ticker:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
     coinFlipping:false, coinResult:null,
     crashRunning:false, crashMult:1.00, crashCrashed:false, crashResult:null, cashoutDodge:0,
@@ -297,7 +289,6 @@ class App extends React.Component {
       }
     }, 1000);
     this.scheduleTicker();
-    this.scheduleChat();
   }
 
   saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
@@ -312,16 +303,8 @@ class App extends React.Component {
       this.scheduleTicker();
     }, delay);
   }
-  scheduleChat(){
-    const delay = 4500 + Math.random()*3500;
-    this._cTimer = setTimeout(()=>{
-      const c = CHAT_LINES[Math.floor(Math.random()*CHAT_LINES.length)];
-      this.setState(s=>({chat:[c, ...s.chat].slice(0,6)}));
-      this.scheduleChat();
-    }, delay);
-  }
   componentWillUnmount(){
-    clearTimeout(this._tTimer); clearTimeout(this._cTimer);
+    clearTimeout(this._tTimer);
     clearInterval(this._crashInt); clearInterval(this._crateInt);
     clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
     clearTimeout(this._ocFlyTimer); clearTimeout(this._creditReplayTimer);
@@ -487,6 +470,15 @@ class App extends React.Component {
     return true;
   }
   spendBB(surface){ return this.payBB(GAME_PRICES_BB[surface], surface); }
+
+  chatGratuity(amount){
+    if (!(this.state.balanceBB >= amount)) return {waived:true};
+    const nb = this.state.balanceBB - amount;
+    this.setState({balanceBB:nb}); this.saveBalance(nb);
+    Bus.emit(EVENTS.BB_SPENT, {amount, reason:"chat-gratuity"});
+    Regime.evaluate(nb);
+    return {waived:false, amount};
+  }
 
   nextRoundId(){ this._roundSeq = (this._roundSeq||0)+1; return this._roundSeq; }
   settleRound(surface, roundId, kind){
@@ -737,7 +729,8 @@ class App extends React.Component {
       replayCrates: s.crateResult && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
-      ticker:s.ticker, chat:s.chat,
+      ticker:s.ticker,
+      chatHooks: { gratuity:(n)=>this.chatGratuity(n) },
       activeTab:s.activeTab, tabBg, tabColor,
       isRoulette: s.activeTab==="roulette", isCoinflip: s.activeTab==="coinflip", isCrash: s.activeTab==="crash", isCrates: s.activeTab==="crates",
       setTab_roulette:()=>this.setTab("roulette"), setTab_coinflip:()=>this.setTab("coinflip"),
@@ -1211,14 +1204,7 @@ class App extends React.Component {
 
           <div style={{borderTop:"2px solid #3a1206",background:"#120802",padding:"20px 26px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px"}}>
             {v.showChat && (
-              <div>
-                <div style={{fontFamily:"'Bangers',cursive",color:"#ff8a3d",fontSize:"13px",marginBottom:"8px",letterSpacing:"0.5px"}}>LIVE CHAT (847 online)</div>
-                <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"10px",maxHeight:"130px",overflow:"hidden"}}>
-                  {v.chat.map((c,i)=>(
-                    <div key={i} style={{fontSize:"11px",color:"#c9a888",marginBottom:"5px"}}><b style={{color:c.color}}>{c.user}:</b> {c.msg}</div>
-                  ))}
-                </div>
-              </div>
+              <ChatPanel panicActive={v.panicActive} hooks={v.chatHooks} />
             )}
             <div>
               <div style={{display:"flex",gap:"10px",flexWrap:"wrap",marginBottom:"10px"}}>
