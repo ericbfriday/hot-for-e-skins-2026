@@ -89,3 +89,12 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Anchor rule**: every fabricated win is denominated slightly above the player's current balance; the poorer you are, the smaller and more attainable the lies.
 - **Desperation Mode**: the ticker regime below 6 BB — junk wins suppressed, jackpots doubled, and the header flips to "everyone is winning except you*".
 - **Rigged calendar**: MOMCODE_MIKE's scripted win schedule — a standing slot every 10 minutes plus a burst the moment the deposit flow opens.
+- **Ambient personas**: the fabricated chat crowd — hype kids, shills, doomers, bailout beggars, mood analysts, definitely-bots — scripted voices of the house, never real players.
+- **The whale**: the ever-online chat fixture whose domestic circumstances escalate with every deposit ("evicted") and never stop him; the loss-normalizer.
+- **Keyword funnel**: the chat's response engine — messages are matched by keyword, never by meaning; everything you say reads as deposit intent, misinformation, or content.
+- **Whisper**: the VIP HOST's inline private message — conditional love denominated in deposits, not replyable, and exempt from chat decay.
+- **Milestone leak**: the chat announcing your own StatTrak™ Lifetime totals at you — your record repurposed as ambient social proof.
+- **Quiet window**: the chat's scripted silence after your wins — the room celebrates deposits, not wins.
+- **Rain**: the scheduled chat giveaway that falls only on ambient personas; your eligibility rounds down to zero (§8.9).
+- **Vibe violation**: the chat moderation offense — telling the truth aloud earns a timeout, since the fine print already disclosed it and repetition is redundant.
+- **Mike cluster**: MOMCODE_MIKE's implausible Karambit streaks, choreographed to land just before deposit-pressure moments.
