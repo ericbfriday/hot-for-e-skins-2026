@@ -112,3 +112,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **The Break**: the 24-hour pause that recalibrates to 90 seconds of house time; the site's fastest-fulfilled promise.
 - **Self-exclusion**: the ≥4-click exit that excludes the player, not the play. The site keeps running; attendance is still taken.
 - **House-sit**: the owner's stint playing under an excluded player's gamertag — the only winning record the tag will ever hold.
+- **The House Band™**: the site's single audio engine — every sound is one band on one board, synthesized in the player's browser, and it never stops for long.
+- **Comfort mix**: the house's mixing doctrine — losses are lullabied, wins are air-raided; celebration volume scales with estimated value, never net.
+- **Mood soundtrack**: the ambience loop tied to the mood word; it discloses the adjective, never the multiplier.
+- **The Siren**: the site's one (1) jackpot fanfare, shared by every surface; classified as safety equipment and therefore un-muteable.
+- **Courtesy volume**: the 50% at which un-muteable house sounds play while muted; courtesy is 50%.
+- **One (1) trumpet**: the character win's modest fanfare — a single instrument, once per session; it builds character.
+- **Fridge hold**: the deposit flow's hold music — a kitchen-appliance hum; the best-engineered loop on the site.
+- **3dB hot**: mixed louder than it should be because someone asked; the owner is always 3dB hot, 4 in Desperation Mode.
