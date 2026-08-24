@@ -1,5 +1,12 @@
 import React from 'react'
 
+const SKIN_IMAGES = Object.fromEntries(
+  Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
+    path.split("/").pop().replace(".jpg", ""),
+    mod.default,
+  ])
+);
+
 const NAMES = ["xX_QuickScope_Xx","yeetmaster3000","Timmy_Investor","sk8rboi_2009","GrandmasCreditCard","DiscordModReal","EpicGamerMom","BasementDweller44","QuickscopeQueen","NotABot_Trust","AllowanceLaundry","JuiceBoxJunkie"];
 const WIN_TEMPLATES = [
   "{n} just won a Karambit worth $12,000 (screenshot not available)",
@@ -34,7 +41,7 @@ const CATALOG = [
   {id:"skin_09",name:"School WiFi Password | Expired Access",rarity:"Classified Overdraft",statTrak:true,statMetric:"Blocked Sites Bypassed: 6",estimatedValue:"$4,000.00",flavorText:"Works for exactly one (1) more week."},
   {id:"skin_10",name:"Half-Eaten Fruit Roll-Up | Sticky Legendary",rarity:"Covert Extravagance",statTrak:false,statMetric:null,estimatedValue:"$999.99",flavorText:"Preserved in its original wrapper for authenticity."}
 ];
-const ROULETTE_STRIP = Array.from({length:20},(_,i)=>{const it=CATALOG[i%CATALOG.length];return {short:it.name.split("|")[0].trim(),color:RARITY_COLORS[it.rarity]||"#ff8a3d"};});
+const ROULETTE_STRIP = Array.from({length:20},(_,i)=>{const it=CATALOG[i%CATALOG.length];return {short:it.name.split("|")[0].trim(),color:RARITY_COLORS[it.rarity]||"#ff8a3d",image:SKIN_IMAGES[it.id]};});
 
 class App extends React.Component {
   state = {
@@ -330,7 +337,9 @@ class App extends React.Component {
                       <div style={{display:"flex",gap:"8px",padding:"10px 0",transform:`translateX(${v.rouletteOffset}px)`,transition:v.rouletteTransition}}>
                         {v.rouletteStrip.map((s,i)=>(
                           <div key={i} style={{minWidth:"96px",height:"96px",borderRadius:"6px",border:`2px solid ${s.color}`,background:"linear-gradient(160deg,#2a1408,#160a04)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"6px",textAlign:"center"}}>
-                            <div style={{width:"100%",height:"38px",background:`repeating-linear-gradient(45deg,${s.color}22,${s.color}22 4px,transparent 4px,transparent 8px)`,borderRadius:"3px",marginBottom:"5px"}}></div>
+                            <div style={{width:"100%",height:"38px",background:`repeating-linear-gradient(45deg,${s.color}22,${s.color}22 4px,transparent 4px,transparent 8px)`,borderRadius:"3px",marginBottom:"5px",overflow:"hidden",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                              <img src={s.image} alt={s.short} style={{height:"100%",width:"100%",objectFit:"contain"}} />
+                            </div>
                             <div style={{fontSize:"9px",color:"#e8c9ac",lineHeight:1.2}}>{s.short}</div>
                           </div>
                         ))}
@@ -426,7 +435,9 @@ class App extends React.Component {
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"14px"}}>
                   {v.catalog.map(item=>(
                     <div key={item.id} style={{border:`2px solid ${item.rarityColor}`,borderRadius:"8px",background:"linear-gradient(160deg,#241005,#160a04)",padding:"12px",display:"flex",flexDirection:"column",gap:"6px"}}>
-                      <div style={{width:"100%",height:"70px",borderRadius:"5px",background:`repeating-linear-gradient(45deg,${item.rarityColor}22,${item.rarityColor}22 6px,transparent 6px,transparent 12px)`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"9px",color:"#8a6a52",fontFamily:"monospace"}}>item render pending</div>
+                      <div style={{width:"100%",height:"70px",borderRadius:"5px",background:`repeating-linear-gradient(45deg,${item.rarityColor}22,${item.rarityColor}22 6px,transparent 6px,transparent 12px)`,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                        <img src={SKIN_IMAGES[item.id]} alt={item.name} style={{height:"100%",width:"100%",objectFit:"contain"}} />
+                      </div>
                       <div style={{fontSize:"11px",fontWeight:800,color:"#ffe9d6",lineHeight:1.3}}>{item.name}</div>
                       <div style={{fontSize:"9.5px",color:item.rarityColor,fontWeight:700,textTransform:"uppercase",letterSpacing:"0.5px"}}>{item.rarity}</div>
                       {item.statTrak && (
