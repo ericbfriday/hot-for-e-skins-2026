@@ -14,6 +14,18 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Derived denominations**: USD, V-Gems, and SkinCoinz — display-only conversions of the BB balance at fixed ratios, never separately held. The USD chip is the cash-out mirage: permanently estimated at $0.00.
 - **Fake win**: an award of inventory or credit that cannot be withdrawn.
 - **Pending withdrawal**: the permanent state of every withdrawal attempt (ToS §1.3).
+- **Market-Grade**: a held catalog skin — fake-won, purchased, or contracted; the only items with (insulting) exits.
+- **Digital Asset**: a crate JPEG award — non-tradeable, non-sellable, and priced "emotional".
+- **Certified Pre-Worse™**: the condition stamp; wear can be re-appraised downward, never upward.
+- **Provenance ledger**: the append-only per-item history of humiliations (fees, downgrades, thefts).
+- **Trade Hold**: the perpetual "8 days (0 hours elapsed)" on purchased items — which is why only fake-won items can ever be sold.
+- **Instant Sell™**: the only exit that pays — 0.1% of estimated value, on the lower of two estimates, floored at 1 BB.
+- **Marketplace listing**: the fake exit — fees up front, one bot lowball, and "sold" proceeds routed to Escrow forever.
+- **Escrow**: where sale proceeds await verification (see Pending withdrawal); nothing has ever left.
+- **Trade-Up Contract**: five same-tier items plus fees, exchanged for the cheapest item of the next tier; sometimes a photograph.
+- **Rollback Event**: the scheduled "market event" that re-steals the best item, leaving a Market Event Receipt (est. $0.00).
+- **HFES-10**: the market index rendered from the running maximum; it has never gone down.
+- **Portfolio value**: the monotonic estimated total of held items; realized losses are not counted, and Cash Value (est.) stays $0.00.
 - **Ask-Mom deposit flow**: the theatrical refill flow triggered when credits run low; Mom's credit card is the fictional funding source.
 - **Gamertag**: the generated anonymous session identity, persisted locally and featured in the ticker and chat.
 - **Burn-down**: how quickly a session's starting grant is lost to the house.
