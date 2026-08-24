@@ -3,11 +3,17 @@ import { Mood } from "./spine/mood.js";
 import { Bus, EVENTS, Regime } from "./spine/bus.js";
 import "./spine/vault.js";
 import "./spine/band.js";
+import AskMomFlow from "./askmom/AskMomFlow.jsx";
+import {
+  loadOC, saveOC, loadBonus, saveBonus, clearBonus, loadDepositStats,
+} from "./askmom/session.js";
 import {
   GAME_PRICES_BB, MATERNAL_STARTER_GRANT_BB, DESPERATION_THRESHOLD_BB,
-  V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE,
-  NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY, TOP_UP_PLACEHOLDER_COPY
+  V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE, REFILL_PACKAGES,
+  NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY
 } from "./spine/constants.js";
+
+const PKG_NAME = Object.fromEntries(REFILL_PACKAGES.map((p) => [p.id, p.name]));
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -62,7 +68,8 @@ class App extends React.Component {
     ageVerified:false, confettiOn:false, confettiPieces:[],
     tosOpen:false, panicActive:false,
     activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
-    moodWord:null, denomsOpen:false, topUpNote:false,
+    moodWord:null, denomsOpen:false,
+    balanceOC:0, bonusOC:null, askmom:null, toasts:[], ocFly:null, cooldown:null, streakChip:null, abandonedCount:0,
     ticker:[], chat:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
     coinFlipping:false, coinResult:null,
@@ -89,10 +96,52 @@ class App extends React.Component {
       }
       if (age === "1") this.setState({ageVerified:true});
     } catch(e){}
-    this.setState({balanceBB:balance});
-    this.saveBalance(balance);
-    this._offMood = Mood.onChange(({word})=>this.setState({moodWord:word}));
+    let oc = loadOC();
+    let bonus = loadBonus();
+    if (bonus && Date.now() >= bonus.expiresAt) {
+      const expired = bonus.amount;
+      clearBonus(); bonus = null;
+      setTimeout(()=>this.toast("Your "+expired+" Bonus OC expired as scheduled (§2.3). They are survived by nothing."), 900);
+    }
+    this.setState({balanceOC:oc, bonusOC:bonus, streakChip: loadDepositStats().streak});
+    this._offMood = Mood.onChange(({word})=>{
+      this.setState({moodWord:word});
+      const b = this.state.bonusOC;
+      if (b && Date.now() >= b.expiresAt) {
+        clearBonus();
+        this.setState({bonusOC:null});
+        this.toast("Your "+b.amount+" Bonus OC expired as scheduled (§2.3). They are survived by nothing.");
+      }
+    });
     Mood.init();
+    this._offDeposit = Bus.on(EVENTS.DEPOSIT_COMPLETED, (p)=>{
+      const name = PKG_NAME[p.packageId] || "a package";
+      this.pushTicker("You asked Mom. Mom said yes (she wasn't in the room)");
+      this.pushTicker("You redeemed the "+name+". Chores pending.");
+      if (p.firstEver) {
+        this.pushTicker("MOMCODE_MIKE [OWNER] just 47x'd Mom's Visa — you're next (code MOM)");
+        this.toast("Turbo Spin unlocked. It never re-locks. Premium is a scar.");
+      }
+      if (p.packageId === "moms-max") {
+        this.pushTicker("Mom's Max purchased by You. This is the last time (§10.3).");
+        this.pushTicker("MOMCODE_MIKE [OWNER]: You went Max. Respect. (code MOM)");
+        this.toast("VIP TIER: MOM'S FAVORITE (full). It unlocks nothing. The house appreciates you.");
+      }
+      this.setState({streakChip: loadDepositStats().streak});
+    });
+    this._lastInput = Date.now();
+    this._lastIdleNag = 0;
+    this._activity = ()=>{ this._lastInput = Date.now(); };
+    window.addEventListener("pointerdown", this._activity);
+    window.addEventListener("keydown", this._activity);
+    window.addEventListener("wheel", this._activity);
+    this._idleInt = setInterval(()=>{
+      const now = Date.now();
+      if (this.state.balanceBB < DESPERATION_THRESHOLD_BB && now - this._lastInput > 45000 && now - this._lastIdleNag > 300000) {
+        this._lastIdleNag = now;
+        this.toast("MOM (1 missed call) — she senses opportunity", {actionLabel:"+ Top Up", onAction:()=>this.openAskMom({source:"nag"})});
+      }
+    }, 5000);
     Bus.emit(EVENTS.SESSION_STARTED, {returning});
     Regime.evaluate(balance);
     this.scheduleTicker();
@@ -121,8 +170,15 @@ class App extends React.Component {
   componentWillUnmount(){
     clearTimeout(this._tTimer); clearTimeout(this._cTimer);
     clearInterval(this._crashInt); clearInterval(this._crateInt);
-    clearTimeout(this._insTimer); clearTimeout(this._topUpTimer);
+    clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
+    clearTimeout(this._ocFlyTimer); clearTimeout(this._creditReplayTimer);
     if (this._offMood) this._offMood();
+    if (this._offDeposit) this._offDeposit();
+    if (this._activity) {
+      window.removeEventListener("pointerdown", this._activity);
+      window.removeEventListener("keydown", this._activity);
+      window.removeEventListener("wheel", this._activity);
+    }
   }
 
   verify(){
@@ -247,10 +303,79 @@ class App extends React.Component {
     }, total);
   }
 
-  showTopUpNote(){
-    this.setState({topUpNote:true});
-    clearTimeout(this._topUpTimer);
-    this._topUpTimer = setTimeout(()=>this.setState({topUpNote:false}), 2600);
+  openAskMom(opts={}){
+    const source = opts.source || "header";
+    this.setState({askmom:{source, enterStage: opts.enterStage || null}});
+    Bus.emit(EVENTS.ASKMOM_OPENED, {source});
+  }
+  closeAskMom(res={}){
+    this.setState({askmom:null});
+    if (res.abandoned) {
+      this.setState({abandonedCount:(this.state.abandonedCount||0)+1});
+      if (res.reason === "dad") this.toast("§3.1 reminder: it would be the wrong Visa.");
+    }
+  }
+  creditOC(oc, bonus){
+    const nb = this.state.balanceOC + oc;
+    this.setState({balanceOC:nb});
+    saveOC(nb);
+    if (bonus) { saveBonus(bonus); this.setState({bonusOC:bonus}); }
+  }
+  creditBB(amount){
+    const nb = this.state.balanceBB + amount;
+    this.setState({balanceBB:nb}); this.saveBalance(nb);
+    Bus.emit(EVENTS.BB_CREDITED, {amount, reason:"askmom-conversion"});
+    Regime.evaluate(nb);
+    const surface = this.pendingReplay;
+    if (surface && nb >= GAME_PRICES_BB[surface]) {
+      this.pendingReplay = null;
+      clearTimeout(this._creditReplayTimer);
+      const fn = {roulette:this.playRoulette, coinflip:this.playCoinflip, crash:this.startCrash, crates:this.buyKey}[surface];
+      if (fn) this._creditReplayTimer = setTimeout(()=>fn.call(this), 700);
+    }
+  }
+  convertOC(ocAmount, bbAmount){
+    const ocLeft = Math.max(0, this.state.balanceOC - ocAmount);
+    this.setState({balanceOC:ocLeft});
+    saveOC(ocLeft);
+    this.creditBB(bbAmount);
+  }
+  flyOC(n){
+    const key = Date.now();
+    this.setState({ocFly:{n, key}});
+    clearTimeout(this._ocFlyTimer);
+    this._ocFlyTimer = setTimeout(()=>this.setState({ocFly:null}), 1300);
+  }
+  toast(text, opts={}){
+    const id = Date.now() + Math.random();
+    this.setState(s=>({toasts:[...s.toasts, {id, text, actionLabel:opts.actionLabel, onAction:opts.onAction}].slice(-4)}));
+    setTimeout(()=>this.setState(s=>({toasts:s.toasts.filter(t=>t.id!==id)})), 4800);
+  }
+  confetti(){
+    const pieces = Array.from({length:24},()=>({left:Math.random()*100,color:["#ff5a14","#ffd54a","#8fd97a","#4a90e2"][Math.floor(Math.random()*4)],dur:1+Math.random(),delay:Math.random()*0.4}));
+    this.setState({confettiOn:true, confettiPieces:pieces});
+    setTimeout(()=>this.setState({confettiOn:false}), 1600);
+  }
+  dismissToast(id){
+    this.setState(s=>({toasts:s.toasts.filter(t=>t.id!==id)}));
+  }
+  pushTicker(line){
+    this.setState(s=>({ticker:[line, ...s.ticker].slice(0,8)}));
+  }
+  cooldownStart(){
+    clearInterval(this._coolInt);
+    const started = Date.now();
+    this.setState({cooldown:{seconds:59, abandoned:false}});
+    this._coolInt = setInterval(()=>{
+      const elapsed = (Date.now()-started)/1000;
+      if (elapsed < 3) this.setState({cooldown:{seconds:Math.max(0, 59-Math.floor(elapsed)), abandoned:false}});
+      else if (elapsed < 5.5) this.setState({cooldown:{seconds:0, abandoned:true}});
+      else { clearInterval(this._coolInt); this.setState({cooldown:null}); }
+    }, 500);
+  }
+  topUpAndPlay(surface){
+    this.pendingReplay = surface;
+    this.openAskMom({source:surface});
   }
 
   renderVals(){
@@ -266,13 +391,38 @@ class App extends React.Component {
       tosOpen:s.tosOpen, toggleTos:()=>this.toggleTos(),
       panicActive:s.panicActive, togglePanic:()=>this.togglePanic(),
       mainBlurFilter: s.panicActive ? "blur(4px)" : "none",
-      bbDisplay:fmtBB(bb), ocDisplay:"0",
+      bbDisplay:fmtBB(bb), ocDisplay:s.balanceOC.toLocaleString("en-US"), ocCount:s.balanceOC,
       vgDisplay:Math.round(vg).toLocaleString("en-US"), scDisplay:sc.toFixed(2),
       moodLine: s.moodWord ? ("Today's mood: "+s.moodWord+" — rates recalculated per §8.9") : "",
       showNag: bb < DESPERATION_THRESHOLD_BB, nagCopy:NAG_LOW_BB_COPY,
+      nagTopUp:()=>this.openAskMom({source:"nag"}),
       denomsOpen:s.denomsOpen, openDenoms:()=>this.setState({denomsOpen:true}), closeDenoms:()=>this.setState({denomsOpen:false}),
-      topUpNote:s.topUpNote, topUp:()=>this.showTopUpNote(), topUpCopy:TOP_UP_PLACEHOLDER_COPY,
+      topUp:()=>this.openAskMom({source:"header"}),
+      askMomFailedSpend:()=>this.openAskMom({source:"failed-spend"}),
+      ocHint: s.balanceOC > 0 ? "OC cannot play games. It can only become BB (§2.5). It is currently becoming nothing." : null,
+      openConversion:()=>this.openAskMom({source:"header", enterStage:"conversion"}),
+      bonusSub: s.bonusOC ? ("+"+s.bonusOC.amount+" Bonus OC (expires at the next mood change)") : null,
+      ocFly:s.ocFly, cooldown:s.cooldown,
+      streakChip: s.streakChip && s.streakChip.days >= 1 && !s.streakChip.stuck,
+      abandonedCount: s.abandonedCount || 0,
+      toasts:s.toasts, dismissToast:(id)=>this.dismissToast(id),
       insufficientMsg:s.insufficientMsg,
+      askmom: s.askmom, panicActive:s.panicActive,
+      askmomHooks: {
+        close:(res)=>this.closeAskMom(res),
+        creditOC:(oc,bonus)=>this.creditOC(oc,bonus),
+        convertOC:(oc,bb)=>this.convertOC(oc,bb),
+        creditBB:(n)=>this.creditBB(n),
+        confetti:()=>this.confetti(),
+        flyOC:(n)=>this.flyOC(n),
+        toast:(t,o)=>this.toast(t,o),
+        ticker:(l)=>this.pushTicker(l),
+        cooldown:()=>this.cooldownStart(),
+      },
+      replayRoulette: s.rouletteResult && bb < GAME_PRICES_BB.roulette, topUpAndPlayRoulette:()=>this.topUpAndPlay("roulette"),
+      replayCoinflip: s.coinResult && bb < GAME_PRICES_BB.coinflip, topUpAndPlayCoinflip:()=>this.topUpAndPlay("coinflip"),
+      replayCrash: s.crashResult && bb < GAME_PRICES_BB.crash, topUpAndPlayCrash:()=>this.topUpAndPlay("crash"),
+      replayCrates: s.crateResult && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
       ticker:s.ticker, chat:s.chat,
@@ -368,13 +518,24 @@ class App extends React.Component {
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:"6px"}}>
               <div style={{display:"flex",gap:"10px",flexWrap:"wrap",fontSize:"12px",alignItems:"stretch"}}>
                 <div style={{background:"#0e0a06",border:"1px solid #ffb347",borderRadius:"6px",padding:"7px 12px"}}><span style={{color:"#8a6a52"}}>BB</span> <b style={{color:"#ffb347"}}>{v.bbDisplay}</b></div>
-                <div style={{display:"flex",alignItems:"center",gap:"8px",background:"#0e0a06",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 12px",position:"relative"}}>
-                  <span style={{whiteSpace:"nowrap"}}><span style={{color:"#8a6a52"}}>OC</span> <b style={{color:"#ffe9d6"}}>{v.ocDisplay}</b></span>
-                  <button onClick={v.topUp} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"11px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",animation:"topUpGlow 1.8s infinite",whiteSpace:"nowrap"}}>+ Top Up</button>
-                  {v.topUpNote && (
-                    <div style={{position:"absolute",top:"calc(100% + 6px)",right:0,background:"#241005",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 10px",fontSize:"11px",color:"#a9705a",whiteSpace:"nowrap",zIndex:60,boxShadow:"0 4px 16px rgba(0,0,0,0.6)"}}>{v.topUpCopy}</div>
+                <div style={{display:"flex",flexDirection:"column",background:"#0e0a06",border:"1px solid #ff8a3d",borderRadius:"6px",padding:"7px 12px",position:"relative",animation:v.ocHint?"ocPulse 1.6s infinite":"none"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                    <span onClick={v.ocHint ? v.openConversion : undefined} title={v.ocHint||undefined} style={{whiteSpace:"nowrap",cursor:v.ocHint?"pointer":"default"}}><span style={{color:"#8a6a52"}}>OC</span> <b style={{color:"#ffe9d6"}}>{v.ocDisplay}</b></span>
+                    <button onClick={v.topUp} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"11px",padding:"4px 10px",borderRadius:"6px",cursor:"pointer",animation:"topUpGlow 1.8s infinite",whiteSpace:"nowrap",position:"relative"}}>+ Top Up</button>
+                    {v.cooldown && (
+                      <span style={{fontSize:"8.5px",color:v.cooldown.abandoned?"#a9705a":"#8fd97a",whiteSpace:"nowrap",position:"absolute",top:"calc(100% + 2px)",right:0,fontStyle:"italic"}}>
+                        {v.cooldown.abandoned ? "cooldown abandoned (per your feedback)" : "cooldown: "+v.cooldown.seconds+"s"}
+                      </span>
+                    )}
+                  </div>
+                  {v.bonusSub && <div style={{fontSize:"8px",color:"#e8a52a",marginTop:"2px"}}>{v.bonusSub}</div>}
+                  {v.ocFly && (
+                    <span key={v.ocFly.key} style={{position:"absolute",right:"6px",top:"-4px",fontSize:"12px",fontWeight:900,color:"#ffd54a",animation:"flyOC 1.2s ease-out forwards",pointerEvents:"none"}}>+{v.ocFly.n.toLocaleString("en-US")} OC</span>
                   )}
                 </div>
+                {v.streakChip && (
+                  <div style={{background:"#0e0a06",border:"1px solid #8fd97a",borderRadius:"6px",padding:"7px 10px",fontSize:"9.5px",color:"#8fd97a",whiteSpace:"nowrap"}}>Deposit streak: 1/2 — deposit tomorrow to keep it <span style={{color:"#5a7a4a"}}>(streaks are a fact we made up)</span></div>
+                )}
                 <div onMouseEnter={v.openDenoms} onMouseLeave={v.closeDenoms} style={{position:"relative",display:"flex",alignItems:"center",background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"7px 12px",cursor:"help",color:"#a9705a",whiteSpace:"nowrap"}}>
                   <span>ⓘ other denominations</span>
                   {v.denomsOpen && (
@@ -391,11 +552,24 @@ class App extends React.Component {
           </div>
 
           {v.showNag && (
-            <div style={{background:"#3a2a10",borderBottom:"1px solid #ffd54a",color:"#ffd54a",textAlign:"center",fontSize:"13px",padding:"8px",fontWeight:700,fontStyle:"italic"}}>{v.nagCopy}</div>
+            <div style={{background:"#3a2a10",borderBottom:"1px solid #ffd54a",color:"#ffd54a",textAlign:"center",fontSize:"13px",padding:"8px",fontWeight:700,fontStyle:"italic",display:"flex",gap:"12px",alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
+              <span>{v.nagCopy}</span>
+              <button onClick={v.nagTopUp} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"11px",padding:"4px 12px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap"}}>+ Top Up — Ask Mom</button>
+            </div>
+          )}
+
+          {v.abandonedCount > 0 && (
+            <div style={{background:"#2a1408",borderBottom:"1px solid #7a3a1a",color:"#a9705a",textAlign:"center",fontSize:"11.5px",padding:"6px",display:"flex",gap:"10px",alignItems:"center",justifyContent:"center"}}>
+              <span>Deposit abandoned ({v.abandonedCount})</span>
+              <button onClick={v.topUp} style={{background:"#3a2010",border:"1px solid #7a3a1a",color:"#ffcf9a",fontWeight:800,fontSize:"10px",padding:"2px 8px",borderRadius:"5px",cursor:"pointer"}}>+ Top Up</button>
+            </div>
           )}
 
           {v.insufficientMsg && (
-            <div style={{background:"#5a1a0a",color:"#ffcf9a",textAlign:"center",fontSize:"13px",padding:"8px",fontWeight:700}}>{v.insufficientMsg}</div>
+            <div style={{background:"#5a1a0a",color:"#ffcf9a",textAlign:"center",fontSize:"13px",padding:"8px",fontWeight:700,display:"flex",gap:"12px",alignItems:"center",justifyContent:"center",flexWrap:"wrap"}}>
+              <span>{v.insufficientMsg}</span>
+              <button onClick={v.askMomFailedSpend} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"1px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"11px",padding:"4px 12px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap"}}>Ask Mom →</button>
+            </div>
           )}
 
           <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:0,alignItems:"start"}}>
@@ -440,6 +614,9 @@ class App extends React.Component {
                     {v.rouletteResult && (
                       <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.rouletteResult}</div>
                     )}
+                    {v.replayRoulette && (
+                      <button onClick={v.topUpAndPlayRoulette} style={{marginTop:"10px",background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
+                    )}
                     <button onClick={v.playRoulette} disabled={v.rouletteSpinning} style={{marginTop:"16px",background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.rouletteBtnLabel}</button>
                   </div>
                 )}
@@ -463,6 +640,9 @@ class App extends React.Component {
                     {v.coinResult && (
                       <div style={{margin:"6px 0 12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px",textAlign:"center"}}>{v.coinResult}</div>
                     )}
+                    {v.replayCoinflip && (
+                      <button onClick={v.topUpAndPlayCoinflip} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
+                    )}
                     <div style={{textAlign:"center"}}>
                       <button onClick={v.playCoinflip} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.coinBtnLabel}</button>
                     </div>
@@ -480,6 +660,9 @@ class App extends React.Component {
                     </div>
                     {v.crashResult && (
                       <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.crashResult}</div>
+                    )}
+                    {v.replayCrash && (
+                      <button onClick={v.topUpAndPlayCrash} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
                     )}
                     <div style={{display:"flex",gap:"10px",marginTop:"16px"}}>
                       <button onClick={v.startCrash} disabled={v.crashRunning} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crashStartLabel}</button>
@@ -514,6 +697,9 @@ class App extends React.Component {
                         )}
                         {v.crateResult && (
                           <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.crateResult}</div>
+                        )}
+                        {v.replayCrates && (
+                          <button onClick={v.topUpAndPlayCrates} style={{marginTop:"8px",background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
                         )}
                       </div>
                     </div>
@@ -566,6 +752,23 @@ class App extends React.Component {
             </div>
           </div>
         </div>
+
+        {v.toasts.length > 0 && (
+          <div style={{position:"fixed",top:"14px",left:"50%",transform:"translateX(-50%)",zIndex:160,display:"flex",flexDirection:"column",gap:"8px",alignItems:"center",maxWidth:"90vw"}}>
+            {v.toasts.map(t=>(
+              <div key={t.id} style={{background:"#241005",border:"1px solid #ff8a3d",borderRadius:"8px",padding:"9px 14px",fontSize:"12px",color:"#ffcf9a",boxShadow:"0 6px 20px rgba(0,0,0,0.6)",display:"flex",gap:"10px",alignItems:"center"}}>
+                <span>{t.text}</span>
+                {t.actionLabel && (
+                  <button onClick={()=>{v.dismissToast(t.id); if (t.onAction) t.onAction();}} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"10.5px",padding:"3px 10px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap"}}>{t.actionLabel}</button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {v.askmom && (
+          <AskMomFlow source={v.askmom.source} enterStage={v.askmom.enterStage} panicActive={v.panicActive} hooks={v.askmomHooks} />
+        )}
 
         <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite"}}>MOM'S HOME</button>
 
