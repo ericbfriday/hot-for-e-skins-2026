@@ -44,6 +44,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Burn-down**: how quickly a session's starting grant is lost to the house.
 - **The house**: the site itself; it always wins eventually.
 - **MOM'S HOME**: the panic affordance masking the site as homework.
+- **Maternal Doubloon**: the coin of the Skin Coinflip; one face reads MOM, the other §8.9. The rim belongs to the house.
+- **Edge outcome**: the Doubloon's signature landing — a tie, awarded to the server host. The more often it repeats, the more official the excuse.
+- **Justification ladder**: the house's escalating excuses for repeated edge outcomes, from "tie goes to the server host" through the admin's cousin to quantum drift.
+- **Photo finish**: a coinflip win shown face-up, then overturned on review by one (1) degree.
+- **Double or Nothing**: the post-win reoffer; "doubling" a fake win means relabeling its estimate. The Nothing is load-bearing.
 - **As scheduled**: the crash game's canonical disclaimer — every outcome was scripted at click-time; the schedule is never disclosed (ToS §2.4).
 - **Near-miss plateau ("the stick")**: the scripted moment a crash run freezes at 2.4x–2.9x to make cashing out feel possible; it never is.
 - **Cash-out exhaustion**: the scripted point (7 dodges in) where the cash-out button stops evading — the only clickable moment, and the carrier of the session's one character win.
