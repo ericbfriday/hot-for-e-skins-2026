@@ -98,3 +98,10 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Rain**: the scheduled chat giveaway that falls only on ambient personas; your eligibility rounds down to zero (§8.9).
 - **Vibe violation**: the chat moderation offense — telling the truth aloud earns a timeout, since the fine print already disclosed it and repetition is redundant.
 - **Mike cluster**: MOMCODE_MIKE's implausible Karambit streaks, choreographed to land just before deposit-pressure moments.
+- **Attendance Streak**: consecutive days on which the player completed at least one wagered round; showing up without playing doesn't count. The house calls this loyalty.
+- **VIP Host Mom**: every player's dedicated host from the first tier upward; she is Mom, she messages in chat, and every message is signed "— Management."
+- **Tier Maintenance**: the weekly borrowing requirement that keeps a VIP tier alive; it ratchets to last week's total plus a Loyalty Surcharge, and missing it costs nothing but feelings.
+- **Comeback Key™**: the free crate key waiting after a two-hour absence; time hidden under the Homework disguise counts as absence.
+- **Rebound Crate**: the Comeback Key's crate — the standard award pool, a defuse timer that starts at the cap, and a guaranteed near-miss.
+- **Mom Weather™**: chat rain that pays 1 BB, falling only on players who haven't deposited in six hours. Recent depositors get an umbrella.
+- **Self-Limit Settings**: responsible-gaming controls that all work perfectly and limit nothing, because their units never match the money.
