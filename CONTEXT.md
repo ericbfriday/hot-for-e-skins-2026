@@ -56,10 +56,10 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Justification ladder**: the house's escalating excuses for repeated edge outcomes, from "tie goes to the server host" through the admin's cousin to quantum drift.
 - **Photo finish**: a coinflip win shown face-up, then overturned on review by one (1) degree.
 - **Double or Nothing**: the post-win reoffer; "doubling" a fake win means relabeling its estimate. The Nothing is load-bearing.
-- **As scheduled**: the crash game's canonical disclaimer — every outcome was scripted at click-time; the schedule is never disclosed (ToS §2.4).
+- **As scheduled**: the crash game's canonical disclaimer — every outcome was scripted at click-time; the schedule is never disclosed (ToS §5.5).
 - **Near-miss plateau ("the stick")**: the scripted moment a crash run freezes at 2.4x–2.9x to make cashing out feel possible; it never is.
 - **Cash-out exhaustion**: the scripted point (7 dodges in) where the cash-out button stops evading — the only clickable moment, and the carrier of the session's one character win.
-- **Character win**: the single successful cash-out per session, fee-shaved to at most +1 BB net; everyone wins once (it builds character, ToS §2.4).
+- **Character win**: the single successful cash-out per session, fee-shaved to at most +1 BB net; everyone wins once (it builds character, ToS §5.5).
 - **Fund name ladder**: the escalating college-fund labels given to consecutive crash runs (Semester 1 → Mom's Retirement).
 - **Consolation rebate**: the 5 BB credited every third consecutive crash; non-withdrawable and deliberately too small to re-enter play alone.
 - **Loot Crate Defuser**: the crate surface — a "defusing" ceremony that always ends in a Stock JPEG, never an opening.
@@ -120,3 +120,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **One (1) trumpet**: the character win's modest fanfare — a single instrument, once per session; it builds character.
 - **Fridge hold**: the deposit flow's hold music — a kitchen-appliance hum; the best-engineered loop on the site.
 - **3dB hot**: mixed louder than it should be because someone asked; the owner is always 3dB hot, 4 in Desperation Mode.
+- **The spine**: the shared core every surface is wired to — the mood, the event bus, the interruptible registry, the House Band™, the constants. The site's central nervous system: it carries facts, never money.
+- **Wagered round**: a round that cost at least 1 BB of the player's own balance — the only kind that counts for streaks, attendance, the vault, and absence. Free rounds move nothing but feelings; house-sat rounds count for the streak (it never asked who paid).
+- **Session**: the page lifetime — reload resets the theater, never the balance. The house remembers the money, not the feelings.
+- **Regime**: the site-wide pressure mode (normal, desperation, flood) — one conductor, three rooms leaning in at once, or not at all.
+- **Heater window**: a scripted span when MOMCODE_MIKE wins every ~90 seconds — the first session, any balance under 6 BB, or the half hour around a streak death.
+- **Interruptible moment**: the house's name for a moment a modal may interrupt you. Deposits, crates, the Terms, and the Homework disguise never qualify — which is most of the site.
+- **847**: the site's population constant — the chat's online baseline, the withdrawal queue's depth, the winners-today suffix. The crowd is always 847 big; one of them is you.
+- **Tone bible**: the house stylebook — who may say what, in which register, and which jokes are banned. The only document the personas fear.
