@@ -65,3 +65,7 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Reality strap**: the standing "100% fake" disclaimer line every money-adjacent modal must carry, anchored to ToS §12.4 (Reality).
 - **Bonus OC**: promotional OC bundled with a refill package; void at the next daily mood change — it expires with the mood that granted it (ToS §2.3).
 - **The Honest Paragraph**: the single straight-played clause (ToS §7.4) listing real problem-gambling resources and framing everything else on the site as satire.
+- **MOM'S HOME**: the panic affordance masking the site as the Homework disguise; the site's only frictionless exit — which is the point, since hiding is not leaving.
+- **Homework disguise**: the essay-styled mask surface — generated title, live word count, a grade, and no way to export; the homework is itself a fake win.
+- **Suspicion ladder**: the escalation of Mom's suspicion with repeat panic presses each day, from clean essay to "Close (she knows)".
+- **Hush Gratuity**: the 1 BB maternal levy quietly deducted on every panic restore — customary, not required, automatically applied.
