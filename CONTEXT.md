@@ -57,3 +57,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **DupeShield™**: duplicate-protection theater — duplicate awards are "recycled" into Environmental Credits, which are always zero after rounding.
 - **Consolation Key™**: the free key awarded after three consecutive losses; the loss-leader on-ramp into crate play.
 - **Daily Mom Key**: the drip-fed free key that "arrives from Mom" once a day; claiming it builds the streak.
+- **MOM'S HOME**: the panic affordance masking the site as homework; doubles as the site's official responsible-gaming "Parental Bailout Feature" (ToS §7.3).
+- **Emotional tender**: the legal-fiction status of Obtuse Credits™ — non-refundable, non-transferable, binding only on feelings (ToS §2.1).
+- **Older Brother Clause**: the age-gate eligibility route (ToS §1.1) where the older brother's other-room permission substitutes for being 18; expires when he gets up for a snack.
+- **Are You Mom? Verification**: the deposit-flow identity gauntlet (ToS §3.3) that cannot be passed; failing it certifies the applicant as a deposit-eligible **Mom-adjacent minor**.
+- **Consent Meter**: the scroll-bound gauge gating ToS acceptance (ToS §10.1); caps at 99% until the reader lingers at the bottom, re-arms on Mom's Max purchases and amendment notices.
+- **Reality strap**: the standing "100% fake" disclaimer line every money-adjacent modal must carry, anchored to ToS §12.4 (Reality).
+- **Bonus OC**: promotional OC bundled with a refill package; void at the next daily mood change — it expires with the mood that granted it (ToS §2.3).
+- **The Honest Paragraph**: the single straight-played clause (ToS §7.4) listing real problem-gambling resources and framing everything else on the site as satire.
