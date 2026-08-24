@@ -16,6 +16,10 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Pending withdrawal**: the permanent state of every withdrawal attempt (ToS §1.3).
 - **Ask-Mom deposit flow**: the theatrical refill flow triggered when credits run low; Mom's credit card is the fictional funding source.
 - **Gamertag**: the generated anonymous session identity, persisted locally and featured in the ticker and chat.
+- **Compliance Filter**: the house's name-mangling layer for custom usernames — mood-based leetification plus enforced digits; non-refundable.
+- **Reserved cast**: the scripted personas (owner MOMCODE_MIKE, mod, trade bot, VIP host Mom) who people the ticker and chat; never assigned to real players.
+- **StatTrak™ Lifetime**: the identity's running totals — BB lost, Mom's money borrowed, crates opened, withdrawals pending — surfaced in the Identity panel.
+- **Identity panel**: the header-chip modal where the gamertag, StatTrak™ Lifetime, reroll, and custom-name purchase live.
 - **Burn-down**: how quickly a session's starting grant is lost to the house.
 - **The house**: the site itself; it always wins eventually.
 - **MOM'S HOME**: the panic affordance masking the site as homework.
