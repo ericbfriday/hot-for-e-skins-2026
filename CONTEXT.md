@@ -38,3 +38,10 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Character win**: the single successful cash-out per session, fee-shaved to at most +1 BB net; everyone wins once (it builds character, ToS §2.4).
 - **Fund name ladder**: the escalating college-fund labels given to consecutive crash runs (Semester 1 → Mom's Retirement).
 - **Consolation rebate**: the 5 BB credited every third consecutive crash; non-withdrawable and deliberately too small to re-enter play alone.
+- **Loot Crate Defuser**: the crate surface — a "defusing" ceremony that always ends in a Stock JPEG, never an opening.
+- **Stock JPEG**: the crate's only real award class — royalty-free imagery wearing full rarity tiers; non-tradeable, cash value $0.00.
+- **Pity Meter**: the prominently displayed "guaranteed Rare-or-better" counter that recalibrates before it can ever pay out; doubles as duplicate-protection progress.
+- **Recalibration**: the house's word for any counter, rate, or promise resetting itself (§8.9).
+- **DupeShield™**: duplicate-protection theater — duplicate awards are "recycled" into Environmental Credits, which are always zero after rounding.
+- **Consolation Key™**: the free key awarded after three consecutive losses; the loss-leader on-ramp into crate play.
+- **Daily Mom Key**: the drip-fed free key that "arrives from Mom" once a day; claiming it builds the streak.
