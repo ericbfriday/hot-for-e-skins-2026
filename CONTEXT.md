@@ -105,3 +105,10 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Rebound Crate**: the Comeback Key's crate — the standard award pool, a defuse timer that starts at the cap, and a guaranteed near-miss.
 - **Mom Weather™**: chat rain that pays 1 BB, falling only on players who haven't deposited in six hours. Recent depositors get an umbrella.
 - **Self-Limit Settings**: responsible-gaming controls that all work perfectly and limit nothing, because their units never match the money.
+- **Growth mindset**: the house's limit philosophy — limits only ever rise. The ratchet is called progress, and the slider agrees.
+- **Pending limit check**: the deposit-limit verification that can never conclude: the limit is in BB, the deposits are in OC, and the mood is the referee (§8.9).
+- **Auto-snooze**: the session reminder's delivery model — deferred to moments you can't see, then dismissed on your behalf (Article 7).
+- **Reality Check**: the timed interruption configured for "maximum receptivity" — it lands on wins and spares losses out of fairness.
+- **The Break**: the 24-hour pause that recalibrates to 90 seconds of house time; the site's fastest-fulfilled promise.
+- **Self-exclusion**: the ≥4-click exit that excludes the player, not the play. The site keeps running; attendance is still taken.
+- **House-sit**: the owner's stint playing under an excluded player's gamertag — the only winning record the tag will ever hold.
