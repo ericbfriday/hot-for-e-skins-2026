@@ -77,7 +77,7 @@ export default class TickerPanel extends React.Component {
                 ) : (
                   <span>
                     <b style={{ color: e.color || "#e8c9ac" }}>{e.badge ? e.badge + " " : ""}{e.name}</b>
-                    {e.isYou && <span style={{ color: "#8a6a52", fontSize: "9.5px" }}> (you)</span>}
+                    {e.isYou && <span style={{ color: "#8a6a52", fontSize: "9.5px" }}> {e.youLabel || "(you)"}</span>}
                     {" "}{e.text}{e.flourish ? " ‼" : ""}
                   </span>
                 )}

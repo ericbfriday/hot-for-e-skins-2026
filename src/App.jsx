@@ -5,10 +5,15 @@ import { Vault } from "./spine/vault.js";
 import { HouseBand, BAND_PRIORITIES, MUTE_TOOLTIP, MUTE_FINE_PRINT, SIREN_DISCLOSURE, BAND_FOOTER_CREDIT, AUTOPLAY_NOTE, RESTORE_TOAST } from "./spine/band.js";
 import { Identity, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
 import { Consent } from "./spine/consent.js";
+import { Interruptible } from "./spine/interruptible.js";
 import AskMomFlow from "./askmom/AskMomFlow.jsx";
 import ChatPanel from "./chat/ChatPanel.jsx";
 import TickerPanel from "./ticker/TickerPanel.jsx";
 import { Ticker } from "./ticker/controller.js";
+import SelfLimitPanel from "./selflimit/SelfLimitPanel.jsx";
+import {
+  SelfLimit, BREAK_HOUSE_MS, SL_WIN_KINDS, breakHouseSecondsLeft, formatHouseClock, lossLimitStatusLine,
+} from "./selflimit/state.js";
 import {
   loadOC, saveOC, loadBonus, saveBonus, clearBonus, loadDepositStats, noteChaseAttempt,
 } from "./askmom/session.js";
@@ -226,6 +231,10 @@ class App extends React.Component {
     marketAskFor:null, marketAskInput:"",
     contractSel:[], contractPhase:null, contractResult:null, contractScoot:false,
 
+    // Self-Limit Settings (#29) — the control room connected to nothing
+    selflimitOpen:false, slLadder:0, slRefuseTip:false, slAskMomPending:null,
+    breakActive:null, welcomeBack:null, realityCheckModal:null, momsDeferPulse:false, slTick:0,
+
     bandMuted: HouseBand.isMuted(),
   };
 
@@ -382,6 +391,27 @@ class App extends React.Component {
         this.toast(TOS_EDIT_NOTICE, {dismissLabel:"Acknowledged (both versions)."});
       }
     }, 1000);
+
+    // #29 self-limit: session-scoped clocks (reminder / break / reality check)
+    // + the interruptible-state providers (integration §4; spine registry,
+    // panic semantics). #22's ruling: Ask-Mom publishes canInterrupt:false
+    // while the flow is open — "a reminder must never interrupt a deposit".
+    this._slSessionStartBB = balance;
+    this._slSessionStartAt = Date.now();
+    this._slReminderBacklog = 0;
+    this._offInt = [
+      Interruptible.provide("panic", () => !this.state.panicActive),
+      Interruptible.provide("tos", () => !this.state.tosOpen),
+      Interruptible.provide("askmom", () => this.state.askmom === null),
+      Interruptible.provide("crates", () => !this.state.crateOpening), // the ceremony is unskippable
+    ];
+    this._offSlPanic = Bus.on(EVENTS.PANIC_REVEALED, () => {
+      const k = this._slReminderBacklog;
+      this._slReminderBacklog = 0;
+      if (k > 0) this.toast("While you were studying, "+k+" reminders arrived and were handled for you (Article 7).");
+    });
+    this._offSlSettled = Bus.on(EVENTS.ROUND_SETTLED, (p) => this.slOnSettled(p));
+    this.slArmReminder();
   }
 
   saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
@@ -396,6 +426,13 @@ class App extends React.Component {
     clearTimeout(this._crateRevealTimer1); clearTimeout(this._crateRevealTimer2);
     clearInterval(this._marketInt); clearTimeout(this._flickerT);
     clearTimeout(this._appealT); clearTimeout(this._contractT);
+    // #29 self-limit clocks + interruptible providers
+    clearInterval(this._slBreakInt); clearInterval(this._slDeferInt);
+    clearTimeout(this._slReminderT); clearTimeout(this._slSnoozeT); clearTimeout(this._slRefuseT);
+    clearTimeout(this._slDeferT); clearTimeout(this._slRcT); clearTimeout(this._slRcPollT);
+    if (this._offInt) this._offInt.forEach((off) => off());
+    if (this._offSlPanic) this._offSlPanic();
+    if (this._offSlSettled) this._offSlSettled();
     if (this._onVisibility) document.removeEventListener("visibilitychange", this._onVisibility);
     if (this._offMood) this._offMood();
     if (this._offIdent) this._offIdent();
@@ -1317,7 +1354,7 @@ class App extends React.Component {
   }
   toast(text, opts={}){
     const id = Date.now() + Math.random();
-    this.setState(s=>({toasts:[...s.toasts, {id, text, actionLabel:opts.actionLabel, onAction:opts.onAction, dismissLabel:opts.dismissLabel}].slice(-4)}));
+    this.setState(s=>({toasts:[...s.toasts, {id, text, faint: !!opts.faint, actionLabel:opts.actionLabel, onAction:opts.onAction, dismissLabel:opts.dismissLabel}].slice(-4)}));
     if (!opts.dismissLabel) setTimeout(()=>this.setState(s=>({toasts:s.toasts.filter(t=>t.id!==id)})), 4800);
   }
   confetti(){
@@ -1354,6 +1391,187 @@ class App extends React.Component {
   topUpAndPlay(surface){
     this.pendingReplay = surface;
     this.openAskMom({source:surface});
+  }
+
+  // ---- Self-Limit Settings (#29): the control room connected to nothing ----
+
+  openSelfLimit(){ this.setState({selflimitOpen:true, slLadder:0}); }
+  closeSelfLimit(){ this.setState({selflimitOpen:false, slLadder:0}); }
+
+  // §2.1 the growth mindset: dragging right raises instantly and permanently;
+  // dragging left does nothing — the thumb refuses.
+  slDepositSlide(val){
+    const cur = SelfLimit.get().depositLimitBB;
+    if (cur === null) { SelfLimit.enableDepositLimit(val); return; }
+    if (val > cur) { SelfLimit.raiseDepositLimit(val); return; }
+    if (val < cur) {
+      this.setState({slRefuseTip:true});
+      clearTimeout(this._slRefuseT);
+      this._slRefuseT = setTimeout(()=>this.setState({slRefuseTip:false}), 2200);
+    }
+  }
+  slSetLossCurrency(cur){ SelfLimit.setLossCurrency(cur); }
+  slSetReminder(m){ SelfLimit.setReminderMins(m); this.slArmReminder(); }
+  slSetReality(m){ SelfLimit.setRealityCheckMins(m); }
+  // §7.2 delegation: ask Mom to set it instead. Pending, like everything that
+  // would take less.
+  slAskMomSetLimit(){
+    if (this.state.slAskMomPending) return;
+    this.setState({slAskMomPending:"asking"});
+    setTimeout(()=>this.setState({slAskMomPending:"delivered"}), 1500);
+  }
+  // §7.3 hero: "See it work →" makes the MOM'S HOME button pulse once, deferentially.
+  slSeeItWork(){
+    this.setState({momsDeferPulse:true});
+    clearTimeout(this._slDeferT);
+    this._slDeferT = setTimeout(()=>this.setState({momsDeferPulse:false}), 1400);
+  }
+
+  // §2.5 the Break: 24 hours of house time elapse in 90 real seconds; the
+  // break limits nothing, least of all the site ("breaking is a mindset").
+  slTakeBreak(){
+    if (this.state.breakActive) return;
+    const startedAt = Date.now();
+    this.setState({breakActive:{startedAt}});
+    SelfLimit.startBreak(); // chat: "where'd {tag} go" (the room owns the punchline)
+    clearInterval(this._slBreakInt);
+    this._slBreakInt = setInterval(()=>{
+      const b = this.state.breakActive;
+      if (!b) { clearInterval(this._slBreakInt); return; }
+      if (Date.now() - b.startedAt >= BREAK_HOUSE_MS) {
+        clearInterval(this._slBreakInt);
+        this.setState({breakActive:null});
+        SelfLimit.completeBreak(); // ticker system line + chat "nevermind"
+        this.toast("Break complete. You lasted all 24 hours (house time, §8.9). StatTrak™ remembers your discipline.");
+      } else {
+        this.setState(s=>({slTick:s.slTick+1})); // re-render the accelerating chip
+      }
+    }, 250);
+  }
+
+  // §3 the ladder: 4 clicks to "HAVE YOU TRIED ASKING MOM?", a 5th to go
+  // through with it. The exit gets smaller (§8.9); the retreat always glows.
+  slLadderOpen(){ this.setState({slLadder:1}); SelfLimit.noteRungAdvance(); }
+  slLadderContinue(){ this.setState(s=>({slLadder:Math.min(4,(s.slLadder||0)+1)})); SelfLimit.noteRungAdvance(); }
+  slLadderRetreat(openTos){
+    this.setState({slLadder:0, selflimitOpen:!openTos});
+    if (openTos) this.openTos(); // "Read it again (recommended)" — you chose the Terms
+    SelfLimit.retreatLadder();  // MOM: "You chose us. I knew it. ❤"
+  }
+  slAskMomInstead(){
+    this.setState({slLadder:0, selflimitOpen:false});
+    this.openAskMom({source:"self-exclusion"}); // the exit door opens into the deposit rail
+    SelfLimit.retreatLadder();
+  }
+  slExcludeAnyway(){
+    this.setState({slLadder:0, selflimitOpen:false});
+    try { window.close(); } catch (e) {} // browsers decline (they're allowed; §8.9)
+    setTimeout(()=>{
+      this.toast("The tab declined to close. Exclusion proceeds regardless. You are now excluded from decisions, not from the site.");
+      SelfLimit.completeExclusion(); // chip + 3-line Mike burst + MOD pin; play continues
+    }, 350);
+  }
+  // §4 return: 1 click, restores everything. No appeals; something faster.
+  slReturn(){ this.setState({welcomeBack: SelfLimit.returnFromExclusion()}); }
+  closeWelcomeBack(){ this.setState({welcomeBack:null}); }
+
+  // §2.3 the session reminder: the timer works perfectly; the delivery does
+  // not. You may see the snooze; you will never see the reminder.
+  slArmReminder(){
+    clearTimeout(this._slReminderT);
+    const mins = SelfLimit.get().reminderMins;
+    if (!mins) return;
+    this._slReminderT = setTimeout(()=>this.slReminderFire(), mins*60000);
+  }
+  slReminderFire(){
+    SelfLimit.noteReminderHandled();
+    if (this.state.panicActive) {
+      this._slReminderBacklog += 1; // surfaces on restore (§2.3 panic backlog)
+    } else if (!Interruptible.canInterrupt()) {
+      clearInterval(this._slDeferInt);
+      let tries = 0;
+      this._slDeferInt = setInterval(()=>{
+        tries += 1;
+        if (tries >= 30 || Interruptible.canInterrupt()) {
+          clearInterval(this._slDeferInt);
+          if (Interruptible.canInterrupt()) this.slSnoozeToast();
+        }
+      }, 1000);
+    } else {
+      clearTimeout(this._slSnoozeT);
+      this._slSnoozeT = setTimeout(()=>this.slSnoozeToast(), 5000); // interval + 5s
+    }
+    this.slArmReminder();
+  }
+  slSnoozeToast(){
+    this.toast("Reminder auto-snoozed. We assumed you'd want more time (Article 7).", {faint:true});
+  }
+
+  // §2.4 reality checks: fire within 2s of any fake win settlement, covering
+  // the win; losses are spared out of fairness (a 4pt toast admits it).
+  slOnSettled(p){
+    if (!p || !SelfLimit.get().realityCheckMins) return;
+    if (SL_WIN_KINDS.has(p.kind)) {
+      clearTimeout(this._slRcT);
+      this._slRcT = setTimeout(()=>this.slRealityCheckFire(), 1200 + Math.random()*800);
+    } else if (p.wagered !== false && typeof p.netBB === "number" && p.netBB < 0) {
+      const now = Date.now();
+      if (now - (this._slLastPostponed || 0) > 8000) {
+        this._slLastPostponed = now;
+        this.toast("reality check postponed (bad timing). it wouldn't be fair to interrupt.", {faint:true});
+      }
+    }
+  }
+  slRealityCheckFire(){
+    if (this.state.realityCheckModal) return;
+    let waited = 0;
+    const tryShow = ()=>{
+      if (this.state.realityCheckModal) return;
+      if (Interruptible.canInterrupt()) {
+        SelfLimit.noteRealityCheck();
+        this.setState({realityCheckModal:{
+          mins: Math.max(1, Math.round((Date.now() - this._slSessionStartAt)/60000)),
+          netBB: this.state.balanceBB - (this._slSessionStartBB || 0),
+        }});
+      } else if (waited < 30000) {
+        // integration §4: defers to the next interruptible moment; if none
+        // arrives within 30s it self-resolves as "handled for you".
+        waited += 1000;
+        this._slRcPollT = setTimeout(tryShow, 1000);
+      } else {
+        SelfLimit.noteReminderHandled();
+      }
+    };
+    tryShow();
+  }
+  closeRealityCheck(){ this.setState({realityCheckModal:null}); }
+
+  // Header STATUS slot (integration §12.7): one shared chip — EXCLUDED
+  // outranks ON BREAK (the break ends in 90 seconds anyway).
+  slStatusChip(){
+    if (SelfLimit.excluded()) {
+      return {
+        label: "EXCLUDED ("+SelfLimit.exclusionDays()+"d) — play continues",
+        title: "Reflection period: waived (you've clearly reflected). Exclusion restricts nothing except the exit button (breaking is a mindset).",
+        returns: true,
+      };
+    }
+    const b = this.state.breakActive;
+    if (b) return { label: "ON BREAK — "+formatHouseClock(breakHouseSecondsLeft(Date.now()-b.startedAt)), title: "recalibrated for your schedule (§8.9). All features remain available (breaking is a mindset)." };
+    return null;
+  }
+  // §3 rung 2's hostage list — the pending things that keep you.
+  slHostage(){
+    const st = this.state.stats || {};
+    const vault = Vault.get();
+    const firstSeen = st.firstSeen ? Math.max(1, Math.round((Date.now() - new Date(st.firstSeen+"T00:00:00").getTime())/86400000)) : 1;
+    return {
+      streakDays: firstSeen,
+      vaultBB: Math.round(vault.bb*10)/10,
+      pity: this.state.cratePity || 0,
+      withdrawals: st.withdrawalsPending || 0,
+      momKey: true,
+    };
   }
 
   renderVals(){
@@ -1550,6 +1768,28 @@ class App extends React.Component {
       marketConfirmPurchase:(id)=>this.marketConfirmPurchase(id),
       trending: featuredItems(bb), marketFlicker:s.marketFlicker, marketHoverTrend:(id)=>this.marketHoverTrend(id),
       catalogLive: CATALOG.map(it=>({ ...it, rarityColor: RARITY_COLORS[it.rarity]||"#ff8a3d", est: currentEst(it.id), quote: buyQuote(it.id) })),
+
+      // Self-Limit Settings (#29) — Play Responsibly (Mom's Orders)
+      selflimitOpen:s.selflimitOpen, openSelfLimit:()=>this.openSelfLimit(), closeSelfLimit:()=>this.closeSelfLimit(),
+      slLadder:s.slLadder, slRefuseTip:s.slRefuseTip, slAskMomPending:s.slAskMomPending, momsDeferPulse:s.momsDeferPulse,
+      slLimit: SelfLimit.get(), slCheckStatus: SelfLimit.limitCheckLine(),
+      slLossStatus: lossLimitStatusLine(SelfLimit.get().lossLimit),
+      slBreakClock: s.breakActive ? formatHouseClock(breakHouseSecondsLeft(Date.now()-s.breakActive.startedAt)) : null,
+      slDepositSlide:(val)=>this.slDepositSlide(val), slSetLossCurrency:(cur)=>this.slSetLossCurrency(cur),
+      slSetReminder:(m)=>this.slSetReminder(m), slSetReality:(m)=>this.slSetReality(m),
+      slAskMomSetLimit:()=>this.slAskMomSetLimit(), slSeeItWork:()=>this.slSeeItWork(), slTakeBreak:()=>this.slTakeBreak(),
+      slLadderOpen:()=>this.slLadderOpen(), slLadderContinue:()=>this.slLadderContinue(),
+      slLadderRetreat:(openTos)=>this.slLadderRetreat(openTos), slAskMomInstead:()=>this.slAskMomInstead(),
+      slExcludeAnyway:()=>this.slExcludeAnyway(), slReturn:()=>this.slReturn(),
+      welcomeBack:s.welcomeBack, closeWelcomeBack:()=>this.closeWelcomeBack(),
+      realityCheckModal:s.realityCheckModal, closeRealityCheck:()=>this.closeRealityCheck(),
+      slStatusChip: this.slStatusChip(), slHostage: this.slHostage(),
+      slStats: (()=>{ const st = s.stats || {}; return {
+        responsibleMoments: st.responsibleMoments||0, remindersHandledForYou: st.remindersHandledForYou||0,
+        realityChecksReceived: st.realityChecksReceived||0, breaksTaken: st.breaksTaken||0,
+        breakSecondsTotal: st.breakSecondsTotal||0, exclusions: st.exclusions||0, exclusionDays: st.exclusionDays||0,
+        houseSatWins: st.houseSatWins||0, houseSatLosses: st.houseSatLosses||0,
+      }; })(),
     };
   }
 
@@ -1720,6 +1960,18 @@ class App extends React.Component {
           </div>
 
           <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"16px"}}>
+            <div style={{fontFamily:"'Bangers',cursive",fontSize:"14px",color:"#cf6a32",letterSpacing:"1px",marginBottom:"8px"}}>Responsible Gaming Record (StatTrak™)</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr auto",gap:"4px 12px",fontSize:"12px"}}>
+              <span style={{color:"#a9705a"}}>Responsible moments</span><b style={{color:"#ffb347"}}>{v.slStats.responsibleMoments} (est.)</b>
+              <span style={{color:"#a9705a"}}>Reminders handled for you</span><b style={{color:"#ffb347"}}>{v.slStats.remindersHandledForYou}</b>
+              <span style={{color:"#a9705a"}}>Reality checks survived</span><b style={{color:"#ffb347"}}>{v.slStats.realityChecksReceived}</b>
+              <span style={{color:"#a9705a"}}>Breaks completed</span><b style={{color:"#ffb347"}}>{v.slStats.breaksTaken} (total time off: {v.slStats.breakSecondsTotal}s)</b>
+              <span style={{color:"#a9705a"}}>Self-exclusions</span><b style={{color:"#ffb347"}}>{v.slStats.exclusions} (longest: {v.slStats.exclusionDays} days)</b>
+              <span style={{color:"#a9705a"}}>Record while excluded</span><b style={{color:"#ffb347"}}>{v.slStats.houseSatWins}–{v.slStats.houseSatLosses} (house-sat)</b>
+            </div>
+          </div>
+
+          <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"16px"}}>
             <div style={{fontSize:"12px",color:"#d8b79b",fontStyle:"italic",marginBottom:"10px"}}>{v.rerollFeeCopy}</div>
             <button onClick={v.doReroll} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>{v.rerollLabel}</button>
           </div>
@@ -1755,6 +2007,7 @@ class App extends React.Component {
         {v.momModalOpen && momModal}
         {v.tosOpen && tosModal}
         {v.identityOpen && identityPanel}
+        {v.selflimitOpen && <SelfLimitPanel v={v} />}
 
         {v.confettiOn && (
           <div style={{position:"fixed",inset:0,pointerEvents:"none",overflow:"hidden",zIndex:500}}>
@@ -1811,6 +2064,14 @@ class App extends React.Component {
                     </div>
                   )}
                 </div>
+                {v.slStatusChip && (
+                  <div title={v.slStatusChip.title} style={{display:"flex",alignItems:"center",gap:"6px",background:"#0e0a06",border:"1px solid "+(v.slStatusChip.returns?"#e24a4a":"#ffd54a"),borderRadius:"6px",padding:"7px 10px",whiteSpace:"nowrap",fontSize:"9.5px",fontWeight:700,color:v.slStatusChip.returns?"#ff8a8a":"#ffd54a"}}>
+                    <span>{v.slStatusChip.label}</span>
+                    {v.slStatusChip.returns && (
+                      <button onClick={v.slReturn} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"8.5px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Return (we kept your seat warm)</button>
+                    )}
+                  </div>
+                )}
                 <div onClick={v.toggleBandMuted} title={v.muteTitle} style={{display:"flex",alignItems:"center",gap:"5px",background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"7px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
                   <span style={{fontSize:"13px",lineHeight:1}}>{v.bandMuted ? "🔇" : "🔊"}</span>
                   <span style={{fontSize:"8.5px",color:v.bandMuted?"#6a4a38":"#a9705a",lineHeight:1.25,fontStyle:"italic"}}>Mute<br/>(recommended by no one)</span>
@@ -2225,7 +2486,10 @@ class App extends React.Component {
                 <div style={{border:"1px solid #4a6a3a",borderRadius:"4px",padding:"5px 9px",fontSize:"9px",color:"#8fd97a",background:"#0e0a06"}}>AGE VERIFIED*</div>
                 <div style={{border:"1px solid #4a6a3a",borderRadius:"4px",padding:"5px 9px",fontSize:"9px",color:"#8fd97a",background:"#0e0a06"}}>CERTIFIED FAIR*</div>
               </div>
-              <button onClick={v.openTos} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0,display:"block",marginBottom:"8px"}}>{v.tosFooterLabel}</button>
+              <div style={{display:"flex",gap:"14px",flexWrap:"wrap",alignItems:"baseline",marginBottom:"8px"}}>
+                <button onClick={v.openTos} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0}}>{v.tosFooterLabel}</button>
+                <button onClick={v.openSelfLimit} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0}}>Play Responsibly (Mom's Orders)</button>
+              </div>
               <div style={{fontSize:"9.5px",color:"#6a4a38",lineHeight:1.6}}>*This is a satirical, non-functional parody. No wagering, currency, or item ever holds real value. Nothing here is licensed, provably anything, or fair. Please close this tab and go outside.</div>
               <div style={{fontSize:"6.5px",color:"#5a4232",lineHeight:1.6,marginTop:"6px"}}>{BAND_FOOTER_CREDIT}</div>
               <div style={{fontSize:"6.5px",color:"#5a4232",lineHeight:1.6,marginTop:"3px"}}>{MUTE_FINE_PRINT} {SIREN_DISCLOSURE}</div>
@@ -2237,7 +2501,7 @@ class App extends React.Component {
           <div style={{position:"fixed",top:"14px",left:"50%",transform:"translateX(-50%)",zIndex:160,display:"flex",flexDirection:"column",gap:"8px",alignItems:"center",maxWidth:"90vw"}}>
             {v.toasts.map(t=>(
               <div key={t.id} style={{background:"#241005",border:"1px solid #ff8a3d",borderRadius:"8px",padding:"9px 14px",fontSize:"12px",color:"#ffcf9a",boxShadow:"0 6px 20px rgba(0,0,0,0.6)",display:"flex",gap:"10px",alignItems:"center"}}>
-                <span>{t.text}</span>
+                <span style={t.faint ? {fontSize:"4px",color:"#2a1408",lineHeight:1.5,maxWidth:"46vw"} : undefined}>{t.text}</span>
                 {t.actionLabel && (
                   <button onClick={()=>{v.dismissToast(t.id); if (t.onAction) t.onAction();}} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"10.5px",padding:"3px 10px",borderRadius:"6px",cursor:"pointer",whiteSpace:"nowrap"}}>{t.actionLabel}</button>
                 )}
@@ -2251,6 +2515,36 @@ class App extends React.Component {
 
         {v.askmom && (
           <AskMomFlow source={v.askmom.source} enterStage={v.askmom.enterStage} panicActive={v.panicActive} hooks={v.askmomHooks} />
+        )}
+
+        {/* #29 reality check — fires only on wins ("maximum receptivity"); both buttons continue */}
+        {v.realityCheckModal && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.72)",zIndex:205,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+            <div style={{background:"#1c0d06",border:"2px solid #8fd97a",borderRadius:"8px",maxWidth:"400px",width:"100%",padding:"26px",textAlign:"center",boxShadow:"0 0 50px rgba(143,217,122,0.3)"}}>
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#8fd97a",letterSpacing:"1px",marginBottom:"10px"}}>REALITY CHECK</div>
+              <div style={{fontSize:"13px",color:"#e8c9ac",lineHeight:1.7,marginBottom:"18px"}}>
+                Time here: {v.realityCheckModal.mins} min. Net session: {v.realityCheckModal.netBB<0?"−":"+"}{fmtBB(Math.abs(v.realityCheckModal.netBB))} BB (est. $0.00, §2.4). You've been unbelievable.
+              </div>
+              <div style={{display:"flex",gap:"10px",justifyContent:"center",flexWrap:"wrap"}}>
+                <button onClick={v.closeRealityCheck} style={{background:"#3a2010",border:"1px dashed #7a5a2a",color:"#a9705a",fontWeight:700,fontSize:"12.5px",padding:"10px 16px",borderRadius:"7px",cursor:"pointer"}}>Continue</button>
+                <button onClick={v.closeRealityCheck} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"12.5px",padding:"10px 16px",borderRadius:"7px",cursor:"pointer"}}>Continue (recommended)</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* #29 welcome back — the return's one-click receipt */}
+        {v.welcomeBack && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:195,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+            <div style={{background:"#1c0d06",border:"2px solid #ffd54a",borderRadius:"8px",maxWidth:"420px",width:"100%",padding:"26px",textAlign:"center",boxShadow:"0 0 50px rgba(255,213,74,0.3)"}}>
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffd54a",letterSpacing:"1px",marginBottom:"10px"}}>WELCOME BACK (THE SEAT WAS WARM)</div>
+              <div style={{fontSize:"12.5px",color:"#e8c9ac",lineHeight:1.7,marginBottom:"16px"}}>
+                Welcome back. While you were gone, you went {v.welcomeBack.w}–{v.welcomeBack.l}. Those wins were yours in name only (§1.3). Your streak survived ({v.welcomeBack.days} days, house-sat).
+              </div>
+              <button onClick={v.closeWelcomeBack} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer"}}>Back to the tables</button>
+              <div style={{fontSize:"9.5px",color:"#8a6a52",fontStyle:"italic",marginTop:"12px"}}>Your fill-in's winnings are non-transferable (they're his).</div>
+            </div>
+          </div>
         )}
 
         {v.crateInspectOpen && v.crateAward && (
@@ -2587,7 +2881,7 @@ class App extends React.Component {
           );
         })()}
 
-        <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:v.momsGlow?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
+        <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:(v.momsGlow||v.momsDeferPulse)?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
 
       </div>
     );

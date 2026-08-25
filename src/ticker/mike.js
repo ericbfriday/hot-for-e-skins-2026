@@ -8,8 +8,13 @@
 // "every 5 minutes" figure is superseded — Desperation is always a heater.
 import { Bus, EVENTS } from "../spine/bus.js";
 import { Mood } from "../spine/mood.js";
+import { Identity, YOU_COLOR } from "../spine/identity.js";
 import { HouseBand, BAND_PRIORITIES } from "../spine/band.js";
-import { mikeWinsBaseline, mikeLine, anchorBB, clipLine, fill, MIKE_DEPOSIT_BURST, MIKE_DISCLOSURE } from "./engine.js";
+import { SelfLimit } from "../selflimit/state.js";
+import {
+  mikeWinsBaseline, mikeLine, anchorBB, clipLine, fill, bindName,
+  MIKE_DEPOSIT_BURST, MIKE_DISCLOSURE, HOUSE_SIT_LINES, MID_ITEMS, JACKPOT_ITEMS,
+} from "./engine.js";
 
 const STANDING_SLOT_MS = 600000; // one win per 10 ambient minutes
 const HEATER_MS = 90000;         // ~every 90s during a heater
@@ -25,7 +30,30 @@ export function createMikeController({ emitEntry, isDesperate, hasSessionDeposit
 
   const heaterActive = () => !hasSessionDeposit() || isDesperate() || (streakDiedAt !== null && Date.now() - streakDiedAt < STREAK_DIED_WINDOW_MS);
 
+  // #29 self-limit §4: while you're excluded, Mike house-sits your gamertag —
+  // the standing slot plays a fill-in win under your tag instead of his own.
+  // The fill-in never loses (houseSatLosses is structurally 0), the winnings
+  // never enter your inventory (non-transferable, they're his), and the lines
+  // wear gold with the "(you, excluded)" suffix.
+  function houseSitFire() {
+    const tag = Identity.playerTag() || "you";
+    const items = MID_ITEMS.concat(JACKPOT_ITEMS);
+    const tpl = HOUSE_SIT_LINES[Math.floor(Math.random() * HOUSE_SIT_LINES.length)];
+    emitEntry({
+      // bindName strips the leading {n} — the name field renders first (§9)
+      text: clipLine(bindName(tpl, { n: tag, bb: anchorBB(999), item: items[Math.floor(Math.random() * items.length)] })),
+      name: tag,
+      color: YOU_COLOR,
+      isYou: true,
+      youLabel: "(you, excluded)",
+    });
+    Bus.emit(EVENTS.MIKE_WIN, { class: "house-sat", k });
+    HouseBand.play("mike.stinger", { priority: BAND_PRIORITIES.P3_SOCIAL });
+    SelfLimit.noteHouseSatWin();
+  }
+
   function fire() {
+    if (SelfLimit.excluded()) { houseSitFire(); schedule(); return; }
     const isKarambit = Math.random() < 0.6;
     const pick = isKarambit ? 0 : 1 + Math.floor(Math.random() * 4);
     if (isKarambit) k += 1;

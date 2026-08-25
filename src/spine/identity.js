@@ -135,8 +135,17 @@ function sanitizeIdentity(v) {
   base.assignedAt = typeof v.assignedAt === "string" ? v.assignedAt : null;
   return base;
 }
+// #29 self-limit StatTrak™ fields (integration §12.5: approved additive
+// hfes_stats extensions; surfaced in the Identity panel block). Their milestone
+// leaks ride limit.event + chat's once-per-identity flags, not MILESTONES.
+// houseSatLosses is structurally 0 — the fill-in never loses.
 function blankStats() {
-  return { bbLost: 0, usdBorrowed: 0, cratesOpened: 0, withdrawalsPending: 0, worstLossBB: 0, lossStreak: 0, firstSeen: null, lastSeen: null };
+  return {
+    bbLost: 0, usdBorrowed: 0, cratesOpened: 0, withdrawalsPending: 0, worstLossBB: 0, lossStreak: 0, firstSeen: null, lastSeen: null,
+    responsibleMoments: 0, remindersHandledForYou: 0, realityChecksReceived: 0,
+    breaksTaken: 0, breakSecondsTotal: 0, exclusions: 0, exclusionDays: 0,
+    houseSatWins: 0, houseSatLosses: 0,
+  };
 }
 function sanitizeStats(v) {
   const base = blankStats();
@@ -151,6 +160,15 @@ function sanitizeStats(v) {
   const day = (x) => (typeof x === "string" && /^\d{4}-\d{2}-\d{2}$/.test(x) ? x : null);
   base.firstSeen = day(v.firstSeen);
   base.lastSeen = day(v.lastSeen);
+  base.responsibleMoments = num(v.responsibleMoments);
+  base.remindersHandledForYou = num(v.remindersHandledForYou);
+  base.realityChecksReceived = num(v.realityChecksReceived);
+  base.breaksTaken = num(v.breaksTaken);
+  base.breakSecondsTotal = num(v.breakSecondsTotal);
+  base.exclusions = num(v.exclusions);
+  base.exclusionDays = num(v.exclusionDays);
+  base.houseSatWins = num(v.houseSatWins);
+  base.houseSatLosses = num(v.houseSatLosses);
   return base;
 }
 function loadKey(key, sanitize) {
@@ -232,6 +250,22 @@ export const Identity = {
     return Identity.get();
   },
   getStats() { return { ...stats }; },
+  // #29 self-limit: plain additive bumps on the extended StatTrak™ fields.
+  // No milestone emission — chat owns the limit leaks via limit.event flags.
+  addStat(field, delta) {
+    if (!(field in stats)) return;
+    const next = r2((stats[field] || 0) + (delta || 0));
+    if (next === stats[field]) return;
+    stats[field] = next;
+    saveAll();
+  },
+  maxStat(field, value) {
+    if (!(field in stats)) return;
+    if (typeof value === "number" && Number.isFinite(value) && value > (stats[field] || 0)) {
+      stats[field] = value;
+      saveAll();
+    }
+  },
   beginSession() {
     const today = dateKey(new Date());
     const hadIdentity = identity.tag !== null;
