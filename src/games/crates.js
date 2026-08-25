@@ -62,11 +62,35 @@ export function confettiEligible(tier) {
   return tier === "Classified Overdraft" || tier === "Contraband Liability" || tier === "Covert Extravagance";
 }
 
-// Reel strip: fixed length, Fruit Roll-Up placed one slot before landing, then "recalibrates" further back.
+// Settlement kind per tier (integration.md §3 kind vocabulary; win kinds match
+// chat's WIN_KINDS so the MOD win-deletion theater fires on "real" awards):
+// trash "wins" are junk-wins, the two top real tiers are jackpot/legendary-win,
+// everything else settles as a plain key-defused (house-win shaped loss).
+export function kindForTier(tier) {
+  if (tier === "Consumer Grade Trash") return "junk-win";
+  if (tier === "Classified Overdraft") return "jackpot";
+  if (tier === "Contraband Liability") return "legendary-win";
+  return "key-defused";
+}
+
+// Local calendar day (midnight local — the mood/identity per-day seed family),
+// for the Daily Mom Key once-per-day stamp.
+export function localDayKey(d = new Date()) {
+  const p = (n) => String(n).padStart(2, "0");
+  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+}
+export function dayKeyBefore(key, days = 1) {
+  const d = new Date(key + "T12:00:00");
+  d.setDate(d.getDate() - days);
+  return localDayKey(d);
+}
+
+// Reel strip: fixed length, Fruit Roll-Up immediately before the landing slot,
+// then "recalibrates" one position further back as the needle gets adjacent (§3).
 export function buildReelStrip(landingAward, recalibrated) {
   const LEN = 12;
   const landingIndex = 9;
-  const rollUpIndex = recalibrated ? landingIndex - 3 : landingIndex - 2;
+  const rollUpIndex = recalibrated ? landingIndex - 2 : landingIndex - 1;
   const strip = [];
   for (let i = 0; i < LEN; i++) {
     if (i === landingIndex) strip.push(landingAward);
