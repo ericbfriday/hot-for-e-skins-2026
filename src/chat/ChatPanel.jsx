@@ -3,6 +3,7 @@ import { Mood } from "../spine/mood.js";
 import { Bus, EVENTS, Regime } from "../spine/bus.js";
 import { Identity, RESERVED_CAST, YOU_COLOR } from "../spine/identity.js";
 import { POPULATION } from "../spine/constants.js";
+import { HouseBand, BAND_PRIORITIES } from "../spine/band.js";
 import { createPersonaSession, pickArchetype, pickLine } from "./personas.js";
 import {
   SCROLLBACK_MAX, FADE_MS, ARCHIVE_MS, ARCHIVE_LINE,
@@ -68,6 +69,9 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
   }, [pushEntry]);
 
   const pushWhisper = useCallback((text) => {
+    // The audible layer: a soft close-mic'd breath-chime, above the crowd,
+    // bypassing the mute (audio-gags §3 — "it's intimate like that").
+    HouseBand.play("mom.whisper", { priority: BAND_PRIORITIES.P3_SOCIAL });
     return pushEntry({ user: "MOM", badge: "[VIP HOST]", color: "#ff9ad5", msg: text, whisper: true, pinned: true });
   }, [pushEntry]);
 
