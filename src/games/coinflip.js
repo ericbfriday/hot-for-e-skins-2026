@@ -84,9 +84,9 @@ export function receiptFor() {
 
 // §8 bot personality streak taunts.
 export function streakTaunt(streak, tag) {
-  if (streak >= 7) return "Admin_TradeBot_69: at this point I'm just holding your BB for you (§1.3).";
-  if (streak >= 5) return "Admin_TradeBot_69: " + streak + " and counting. My cousin says hi (he certified your edges).";
-  if (streak >= 3) return "Admin_TradeBot_69: " + tag + " is on a " + streak + "-flip streak. I've started a boat fund.";
+  if (streak >= 7) return "AdminTradeBot_69: at this point I'm just holding your BB for you (§1.3).";
+  if (streak >= 5) return "AdminTradeBot_69: " + streak + " and counting. My cousin says hi (he certified your edges).";
+  if (streak >= 3) return "AdminTradeBot_69: " + tag + " is on a " + streak + "-flip streak. I've started a boat fund.";
   return null;
 }
 
@@ -95,15 +95,15 @@ export function tickerLineForOutcome(kind, tag, item) {
     case "house-win":
       return "You lost " + FLIP_PRICE_BB + " BB to the house (shocking)";
     case "edge":
-      return "Admin_TradeBot_69 collects the edge-case bounty";
+      return "AdminTradeBot_69 collects the edge-case bounty";
     case "photo-finish":
       return "PHOTO FINISH: " + tag + "'s win overturned by one (1) degree. Referee: the house";
     case "junk-win":
-      return tag + " won " + (item ? item.name : "an item") + " off Admin_TradeBot_69 (est. " + (item ? item.value : "") + " — pending, §1.3)";
+      return tag + " won " + (item ? item.name : "an item") + " off AdminTradeBot_69 (est. " + (item ? item.value : "") + " — pending, §1.3)";
     case "nibble":
       return tag + " broke even. A crowd gathered.";
     case "legendary-win":
-      return tag + " WON " + (item ? item.name : "a legendary") + " off Admin_TradeBot_69 (est. " + (item ? item.value : "") + " — pending, §1.3)";
+      return tag + " WON " + (item ? item.name : "a legendary") + " off AdminTradeBot_69 (est. " + (item ? item.value : "") + " — pending, §1.3)";
     default:
       return null;
   }

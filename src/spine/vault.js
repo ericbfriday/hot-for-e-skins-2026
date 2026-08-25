@@ -1,9 +1,28 @@
 import { Bus, EVENTS } from "./bus.js";
+import { Mood } from "./mood.js";
 
 const KEY = "hfes_rakeback";
 const FEED_RATES_BB = { coinflip: 0.1, roulette: 0.1, crash: 0.1, crates: 0.2 };
 const RECALIBRATION_AT_BB = 99.9;
 const CLAIM_CEILING_BB = 100;
+
+// #32 (aligning #23's flag with the site convention): the recalibration draw
+// is day-seeded deterministic (the mood/identity/market family) — seeded by
+// the daily seed + the recalibration index, so the k-th recalibration of a
+// given day always lands the same "random" 1–37 BB. The house does not flip
+// coins; it schedules them (§5.5).
+function seededRecalibrationBB(index) {
+  let h = 2166136261 >>> 0;
+  const str = Mood.seed() + "#recal#" + index;
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  h ^= h >>> 15; h = Math.imul(h, 2246822507) >>> 0; // one avalanche mix, same family as mood.js
+  h ^= h >>> 13; h = Math.imul(h, 3266489909) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0; // JS bitwise XOR returns signed 32-bit — keep it unsigned
+  return +(1 + (h % 10000) / 10000 * 36).toFixed(4);
+}
 
 function blank() {
   // houseSat is the fifth, display-dim bucket (#31): house-sit fills accrue to
@@ -54,7 +73,7 @@ Bus.on(EVENTS.ROUND_SETTLED, (p) => {
   state.feeds[p.surface] = +(state.feeds[p.surface] + rate).toFixed(4);
   state.bb = +(state.bb + rate).toFixed(4);
   if (state.bb >= RECALIBRATION_AT_BB) {
-    state.bb = +(1 + Math.random() * 36).toFixed(4);
+    state.bb = seededRecalibrationBB(state.recalibrations);
     state.recalibrations += 1;
   }
   commit();
@@ -69,7 +88,7 @@ Bus.on(EVENTS.MIKE_WIN, (p) => {
   state.feeds.houseSat = +((state.feeds.houseSat || 0) + 0.1).toFixed(4);
   state.bb = +(state.bb + 0.1).toFixed(4);
   if (state.bb >= RECALIBRATION_AT_BB) {
-    state.bb = +(1 + Math.random() * 36).toFixed(4);
+    state.bb = seededRecalibrationBB(state.recalibrations);
     state.recalibrations += 1;
   }
   commit();

@@ -62,8 +62,10 @@ export const COPY = {
   longestLabel: "Longest streak (unbeaten, like the house)",
   comebackEnvelope: "We kept your seat warm. It cost us nothing. The key's free though.",
   comebackDual: "Welcome back. While you were studying, your streak died and we got you a key. Condolences and congratulations. (§12.0)",
-  momWeatherCovered: "⛈ MOM WEATHER™: 1 BB rains on the faithful. {tag} stays dry (covered).",
-  momWeatherSoaked: "⛈ MOM WEATHER™: 1 BB rains on the faithful. {tag} is soaked (1 BB credited).",
+  // #32: {n} = recipients (POPULATION − you-if-covered) — the count renders
+  // in chat's [BOT] line (integration §3's `momweather.event {recipients, bb}`).
+  momWeatherCovered: "⛈ MOM WEATHER™: 1 BB rains on the faithful ({n} of them). {tag} stays dry (covered).",
+  momWeatherSoaked: "⛈ MOM WEATHER™: 1 BB rains on the faithful ({n} of them). {tag} is soaked (1 BB credited).",
   rainHonesty: "Rain is an engagement precipitation event (§8.9).",
   umbrella: "☂ you're covered",
 };
@@ -125,7 +127,9 @@ const VIP_KEY = "hfes_vip";
 const CB_KEY = "hfes_comeback";
 
 function blankAttendance() {
-  return { current: 0, longest: 0, lastDay: null, lastRoundAt: 0, tombstoneDay: null, tombstoneDays: 0, warnDay: null, warnMask: 0, memorialPending: false, memorialDone: false };
+  // couponDone (#32): the day-30 Mom Coupon™ is once-ever, like the Memorial —
+  // a rebuilt streak re-reaches day 30 but the house does not over-honor twice.
+  return { current: 0, longest: 0, lastDay: null, lastRoundAt: 0, tombstoneDay: null, tombstoneDays: 0, warnDay: null, warnMask: 0, memorialPending: false, memorialDone: false, couponDone: false };
 }
 function blankVip() {
   return { lifetimeBorrowed: 0, weekKey: null, weekBorrowed: 0, lastWeekBorrowed: 0, underReview: false, lastDepositAt: 0 };
@@ -413,6 +417,14 @@ export const Retention = {
     return true;
   },
   memorialOwed() { return !!att.memorialPending && !att.memorialDone; },
+  // #32: the day-30 coupon mints once ever (mirrors the Memorial gate) — a
+  // rebuilt streak re-crosses day 30 without a second coupon.
+  claimCoupon() {
+    if (att.couponDone) return false;
+    att.couponDone = true;
+    saveObj(ATT_KEY, att);
+    return true;
+  },
   // exposed for verification; production traffic rides the bus listeners below
   noteWageredRound,
   __state: () => ({ att, vip, comeback }),
