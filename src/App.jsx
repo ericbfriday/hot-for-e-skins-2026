@@ -2,7 +2,7 @@ import React from 'react'
 import { Mood } from "./spine/mood.js";
 import { Bus, EVENTS } from "./spine/bus.js";
 import { Vault } from "./spine/vault.js";
-import { HouseBand, BAND_PRIORITIES } from "./spine/band.js";
+import { HouseBand, BAND_PRIORITIES, MUTE_TOOLTIP, MUTE_FINE_PRINT, SIREN_DISCLOSURE, BAND_FOOTER_CREDIT, AUTOPLAY_NOTE, RESTORE_TOAST } from "./spine/band.js";
 import { Identity, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
 import { Consent } from "./spine/consent.js";
 import AskMomFlow from "./askmom/AskMomFlow.jsx";
@@ -207,6 +207,7 @@ class App extends React.Component {
     crateSessionOpened:0, crateFreeKeyCount:0, crateInspectOpen:false,
     cratePity:0, crateDupeIds:[], crateHeldCount:0,
     crateMomKeyClaimableToday:false, crateMomKeyStreak:0, crateEnvelope:null,
+    bandMuted: HouseBand.isMuted(),
   };
 
   _tosScrollRef = React.createRef();
@@ -268,7 +269,7 @@ class App extends React.Component {
     if (bonus && Date.now() >= bonus.expiresAt) {
       const expired = bonus.amount;
       clearBonus(); bonus = null;
-      setTimeout(()=>this.toast("Your "+expired+" Bonus OC expired as scheduled (§2.3). They are survived by nothing."), 900);
+      setTimeout(()=>{ this.toast("Your "+expired+" Bonus OC expired as scheduled (§2.3). They are survived by nothing."); HouseBand.ocFuneral(); }, 900);
     }
     this.setState({
       balanceBB:balance, flowPhase, ageVerified:ageOk,
@@ -293,6 +294,7 @@ class App extends React.Component {
         clearBonus();
         this.setState({bonusOC:null});
         this.toast("Your "+b.amount+" Bonus OC expired as scheduled (§2.3). They are survived by nothing.");
+        HouseBand.ocFuneral(); // three descending notes at the mood-change crossfade (audio-gags §2.6)
       }
     });
     this._offIdent = Identity.subscribe(({identity, stats})=>this.setState({ident:identity, stats}));
@@ -331,6 +333,12 @@ class App extends React.Component {
         this.toast("MOM (1 missed call) — she senses opportunity", {actionLabel:"+ Top Up", onAction:()=>this.openAskMom({source:"nag"})});
       }
     }, 5000);
+    this._offBandSettled = Bus.on(EVENTS.ROUND_SETTLED, () => {
+      // The House Band flags the first full fanfare after a net-loss win; the
+      // 4pt LDW disclosure rides it (audio-gags §8).
+      const d = HouseBand.takeLDWDisclosure();
+      if (d) this.toast(d, {dismissLabel:"Acknowledged (4pt)"});
+    });
     Ticker.init({ balanceBB: balance });
     Bus.emit(EVENTS.SESSION_STARTED, {returning, balanceBB: balance});
     this._tosTick = setInterval(()=>{
@@ -361,6 +369,7 @@ class App extends React.Component {
     if (this._offDeposit) this._offDeposit();
     if (this._offMilestone) this._offMilestone();
     if (this._offInventory) this._offInventory();
+    if (this._offBandSettled) this._offBandSettled();
     if (this._activity) {
       window.removeEventListener("pointerdown", this._activity);
       window.removeEventListener("keydown", this._activity);
@@ -504,7 +513,13 @@ class App extends React.Component {
     } else {
       const hiddenMs = this._panicHiddenAt ? Date.now() - this._panicHiddenAt : 0;
       Bus.emit(EVENTS.PANIC_REVEALED, {hiddenMs, missed: Ticker.snapshot().hiddenCount});
+      this.toast(RESTORE_TOAST); // verbatim (audio-gags §8); the Band already auto-restored
     }
+  }
+
+  toggleBandMuted(){
+    HouseBand.setMuted(!HouseBand.isMuted());
+    this.setState({bandMuted: HouseBand.isMuted()});
   }
 
   flashInsufficient(failures){
@@ -1228,6 +1243,8 @@ class App extends React.Component {
       customMsg:s.customMsg, buyCustom:()=>this.buyCustom(), customPrice:CUSTOM_NAME_PRICE_OC,
       customAffordable: s.balanceOC >= CUSTOM_NAME_PRICE_OC,
       panicActive:s.panicActive, togglePanic:()=>this.togglePanic(),
+      bandMuted:s.bandMuted, toggleBandMuted:()=>this.toggleBandMuted(),
+      muteTitle: MUTE_TOOLTIP + "\n\n" + MUTE_FINE_PRINT,
       mainBlurFilter: s.panicActive ? "blur(4px)" : "none",
       bbDisplay:fmtBB(bb), ocDisplay:s.balanceOC.toLocaleString("en-US"), ocCount:s.balanceOC,
       vgDisplay:Math.round(vg).toLocaleString("en-US"), scDisplay:sc.toFixed(2),
@@ -1410,6 +1427,7 @@ class App extends React.Component {
         )}
 
         <div style={{marginTop:"16px",fontSize:"10px",color:"#a9705a",lineHeight:1.5}}>This is a satirical parody. No real money, currency, or skins exist here. Nothing on this page has value. Please, for the love of god, log off. (§12.4)</div>
+        <div style={{marginTop:"6px",fontSize:"8.5px",color:"#7a5a4a",fontStyle:"italic"}}>{AUTOPLAY_NOTE}</div>
       </div>
     );
 
@@ -1601,6 +1619,10 @@ class App extends React.Component {
                       <div>Cash Value (est.): <b style={{color:"#8fd97a"}}>$0.00</b></div>
                     </div>
                   )}
+                </div>
+                <div onClick={v.toggleBandMuted} title={v.muteTitle} style={{display:"flex",alignItems:"center",gap:"5px",background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"7px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
+                  <span style={{fontSize:"13px",lineHeight:1}}>{v.bandMuted ? "🔇" : "🔊"}</span>
+                  <span style={{fontSize:"8.5px",color:v.bandMuted?"#6a4a38":"#a9705a",lineHeight:1.25,fontStyle:"italic"}}>Mute<br/>(recommended by no one)</span>
                 </div>
                 {v.playerTag && (
                   <div onClick={v.openIdentity} title="Identity" style={{display:"flex",alignItems:"center",gap:"6px",background:"#0e0a06",border:"1px solid #ffd54a",borderRadius:"6px",padding:"7px 12px",cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -1985,6 +2007,8 @@ class App extends React.Component {
               </div>
               <button onClick={v.openTos} style={{background:"none",border:"none",color:"#a9705a",fontSize:"11px",textDecoration:"underline",cursor:"pointer",padding:0,display:"block",marginBottom:"8px"}}>{v.tosFooterLabel}</button>
               <div style={{fontSize:"9.5px",color:"#6a4a38",lineHeight:1.6}}>*This is a satirical, non-functional parody. No wagering, currency, or item ever holds real value. Nothing here is licensed, provably anything, or fair. Please close this tab and go outside.</div>
+              <div style={{fontSize:"6.5px",color:"#5a4232",lineHeight:1.6,marginTop:"6px"}}>{BAND_FOOTER_CREDIT}</div>
+              <div style={{fontSize:"6.5px",color:"#5a4232",lineHeight:1.6,marginTop:"3px"}}>{MUTE_FINE_PRINT} {SIREN_DISCLOSURE}</div>
             </div>
           </div>
         </div>
