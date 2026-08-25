@@ -21,8 +21,8 @@ import {
 } from "./games/crash.js";
 import {
   defuseDurationMs, buildDefuseStages, TRACK_NAME_CAPTION,
-  FRUIT_ROLL_UP, pickAward, confettiEligible, buildReelStrip,
-  incrementPity, CRATE_TICKER_TEMPLATES, CRATE_CHAT,
+  FRUIT_ROLL_UP, pickAward, confettiEligible, buildReelStrip, kindForTier,
+  incrementPity, localDayKey, dayKeyBefore, CRATE_TICKER_TEMPLATES, CRATE_CHAT,
   SKIP_PRICE_BB, SKIP_STALL_EXTENSION_MS, SKIP_JUMP_PCT, SKIP_APPEARS_AT_PCT,
 } from "./games/crates.js";
 import { Inventory } from "./games/inventory.js";
@@ -191,7 +191,7 @@ class App extends React.Component {
     activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
     moodWord:null, denomsOpen:false,
     balanceOC:0, bonusOC:null, askmom:null, toasts:[], ocFly:null, cooldown:null, streakChip:null, abandonedCount:0,
-    ticker:[],
+    ticker:[], chat:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
     rouletteInsured:true, rouletteTurbo:false, rouletteTurboUnlocked:false,
     rouletteStreak:0, rouletteNearMissBackToBack:false, rouletteConsolationMsg:null,
@@ -216,9 +216,8 @@ class App extends React.Component {
     crateStage:null, crateCaption:"", crateSkipAvailable:false, crateSkipUsed:false,
     crateReel:null, crateRevealPhase:null, crateAward:null,
     crateSessionOpened:0, crateFreeKeyCount:0, crateInspectOpen:false,
-    cratePity:0, crateDupeIds:[],
+    cratePity:0, crateDupeIds:[], crateHeldCount:0,
     crateMomKeyClaimableToday:false, crateMomKeyStreak:0, crateEnvelope:null,
-  };
   };
 
   _tosScrollRef = React.createRef();
@@ -261,18 +260,16 @@ class App extends React.Component {
         welcomeToast = sess.toast;
       }
     }
-    let cratePity = 0, crateDupeIds = [], crateInventory = [];
+    let cratePity = 0, crateDupeIds = [];
     let crateMomKeyStreak = 0, crateMomKeyClaimableToday = false;
     try {
       const p = parseInt(localStorage.getItem("hfes_crate_pity"), 10);
       cratePity = Number.isFinite(p) && p >= 0 && p < 50 ? p : 0;
       crateDupeIds = JSON.parse(localStorage.getItem("hfes_crate_dupes") || "[]");
       if (!Array.isArray(crateDupeIds)) crateDupeIds = [];
-      crateInventory = JSON.parse(localStorage.getItem("hfes_crate_inventory") || "[]");
-      if (!Array.isArray(crateInventory)) crateInventory = [];
       const streak = parseInt(localStorage.getItem("hfes_crate_momkey_streak"), 10);
       crateMomKeyStreak = Number.isFinite(streak) && streak >= 0 ? streak : 0;
-      const todayKey = new Date().toISOString().slice(0, 10);
+      const todayKey = localDayKey();
       const lastDay = localStorage.getItem("hfes_crate_momkey_day");
       crateMomKeyClaimableToday = lastDay !== todayKey;
     } catch (e) {}
@@ -297,6 +294,11 @@ class App extends React.Component {
     if (welcomeToast) this.toast(welcomeToast);
     this._offMood = Mood.onChange(({word})=>{
       this.setState({moodWord:word});
+      // Local-midnight day flip: the Daily Mom Key re-arms (per-day draw family).
+      try {
+        const lastDay = localStorage.getItem("hfes_crate_momkey_day");
+        if (lastDay !== localDayKey()) this.setState({crateMomKeyClaimableToday:true});
+      } catch (e) {}
       const b = this.state.bonusOC;
       if (b && Date.now() >= b.expiresAt) {
         clearBonus();
@@ -326,11 +328,13 @@ class App extends React.Component {
     this._offMilestone = Bus.on(EVENTS.STATS_MILESTONE, (p)=>{
       if (p && p.field === "lossStreak" && p.value === 3 && !this._consolationKeyClaimed) {
         this._consolationKeyClaimed = true;
-        this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount+1}));
-        this.toast("Consolation Key™ arrived from Mom (she doesn't know). You lost. Have a key. Crates always feel like winning.®");
+        this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount+1, crateEnvelope:{kind:"consolation"}}));
+        this.toast("Consolation Key™ — You lost. Have a key. Crates always feel like winning.®");
         this.pushTicker("A key arrived from Mom (no return address)");
       }
     });
+    this._offInventory = Inventory.subscribe(()=>this.setState({crateHeldCount: Inventory.list().length}));
+    this.setState({crateHeldCount: Inventory.list().length});
     this._lastInput = Date.now();
     this._lastIdleNag = 0;
     this._activity = ()=>{ this._lastInput = Date.now(); };
@@ -374,7 +378,7 @@ class App extends React.Component {
   }
   componentWillUnmount(){
     clearTimeout(this._tTimer);
-    clearInterval(this._crashInt); clearInterval(this._crateInt);
+    clearInterval(this._crashInt); clearInterval(this._crateInt); clearInterval(this._crashStickPulse);
     clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
     clearTimeout(this._rouletteSpinTimer); clearTimeout(this._coinFlipTimer);
     clearTimeout(this._ocFlyTimer); clearTimeout(this._creditReplayTimer);
@@ -385,6 +389,7 @@ class App extends React.Component {
     if (this._offIdent) this._offIdent();
     if (this._offDeposit) this._offDeposit();
     if (this._offMilestone) this._offMilestone();
+    if (this._offInventory) this._offInventory();
     if (this._activity) {
       window.removeEventListener("pointerdown", this._activity);
       window.removeEventListener("keydown", this._activity);
@@ -818,18 +823,24 @@ class App extends React.Component {
     const roundId = this.nextRoundId();
     const runCount = this.state.crashRunCount + 1;
     this._crashRoundId = roundId;
+    // Provably Fair™ theater: the schedule's commitment is minted before the
+    // climb starts; the preimage is the schedule (not disclosed, §5.5).
+    const script = scriptRun(this.state.crashConsecutiveLosses);
+    this._crashScript = script;
+    const commitment = pseudoHash12("crash:"+roundId+":"+script.duration.toFixed(0)+":"+script.peakDisplay.toFixed(2)+":"+script.crashHeadline.toFixed(2));
     Bus.emit(EVENTS.ROUND_STARTED, {surface:"crash", roundId, priceBB:GAME_PRICES_BB.crash, wagered:true});
-    HouseBand.play("crash.start", {priority:BAND_PRIORITIES.P2_GAME, volume:0.8});
+    HouseBand.play("crash.round", {priority:BAND_PRIORITIES.P2_GAME, volume:0.8});
     this.setState({
       crashPhase:"scheduling", crashRunCount:runCount, crashDodges:0, crashExhausted:false,
       crashMult:1.00, crashCrashed:false, crashResult:null, crashOffset:{x:0,y:0}, crashScale:1,
       crashButtonLabel:"Cash Out", crashStickActive:false, crashProcessing:false,
+      crashCommitment:commitment,
     });
     if (runCount === 1) this.pushChat({user:"xX_QuickScope_Xx", msg:"here we go again", color:"#ff8a3d"});
     setTimeout(()=>this._crashBeginClimb(), 600);
   }
   _crashBeginClimb(){
-    const script = scriptRun(this.state.crashConsecutiveLosses);
+    const script = this._crashScript || scriptRun(this.state.crashConsecutiveLosses);
     this._crashScript = script;
     this._crashStickTriggered = false;
     this.setState({crashPhase:"climbing"});
@@ -844,14 +855,23 @@ class App extends React.Component {
       if (script.hasStick && !this._crashStickTriggered && mult >= script.stickValue) {
         this._crashStickTriggered = true;
         const stickStart = Date.now();
-        this.setState({crashMult:script.stickValue, crashStickActive:true});
-        Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"stick"});
+        this.setState({crashMult:script.stickValue, crashStickActive:true, crashButtonLabel:"NOW would be good"});
+        // Stick tremble pulses — chat counts these; the 700ms cadence means the
+        // counter only reaches 3 inside a widened (3+ consecutive loss) stick,
+        // which is exactly when the spec's conscience chatter appears.
+        clearInterval(this._crashStickPulse);
+        let pulseT = 0;
+        this._crashStickPulse = setInterval(()=>{
+          pulseT += 700;
+          if (pulseT >= script.stickDurationMs) { clearInterval(this._crashStickPulse); return; }
+          Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"stick"});
+        }, 700);
         this.pushChat({
           user:"definitely_your_conscience",
           msg: this.state.crashConsecutiveLosses >= 3 ? "take it… take it…" : "CASH OUT CASH OUT CASH OUT",
           color:"#e8c9ac",
         });
-        setTimeout(()=>{ pausedMs += Date.now() - stickStart; this.setState({crashStickActive:false}); }, script.stickDurationMs);
+        setTimeout(()=>{ pausedMs += Date.now() - stickStart; this.setState({crashStickActive:false, crashButtonLabel:"Cash Out"}); clearInterval(this._crashStickPulse); }, script.stickDurationMs);
         return;
       }
       this.setState({crashMult:mult});
@@ -871,9 +891,18 @@ class App extends React.Component {
       crashResult: "CRASHED at "+script.crashHeadline.toFixed(2)+"x (as scheduled). Peak display: "+script.peakDisplay.toFixed(2)+"x. The peak display was decorative."
         + stickLine + " " + fundName + " fully liquidated (as scheduled).",
     });
-    Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crash", roundId:this._crashRoundId, wagered:true, priceBB:GAME_PRICES_BB.crash, netBB:-GAME_PRICES_BB.crash, kind:"crash-run"});
+    // the loss lands via round.settled below (chat clears its stick counter on
+    // any crash settlement, so the counter is calibrated by stick-window pulses
+    // alone: it only reaches 3 inside a widened 3+-consecutive-loss stick)
+    this.settleRound("crash", this._crashRoundId, "crash-run", {surfaceStreak:consecutive});
     HouseBand.play("crash.crashed", {priority:BAND_PRIORITIES.P2_GAME, volume:0.8});
-    this.pushTicker("The College Fund crashed at "+script.crashHeadline.toFixed(2)+"x (as scheduled)");
+    const tag = this.playerTagOrYou();
+    this._crashTickerIdx = ((this._crashTickerIdx || 0) + 1) % CRASH_TICKER_TEMPLATES.length;
+    this.pushTicker(CRASH_TICKER_TEMPLATES[this._crashTickerIdx]
+      .replace("{x}", script.crashHeadline.toFixed(2))
+      .replace("{peak}", script.peakDisplay.toFixed(2))
+      .replace("{n}", tag)
+      .replace("{dodges}", String(this.state.crashDodges)));
     this.pushChat({user:"AdminTradeBot_69", msg:"as scheduled 📉", color:"#e24a4a"});
     if (consecutive >= 3 && consecutive % 3 === 0) this._crashConsolationRebate();
   }
@@ -896,7 +925,6 @@ class App extends React.Component {
       crashExhausted: exhausted,
     });
     if (exhausted) {
-      Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"exhaustion"});
       this.pushChat({user:"MOD_Chad_Official", msg:info.chat, color:"#8fd97a"});
     } else if (Math.random() < 0.4) {
       this.pushChat({user:"xX_QuickScope_Xx", msg:info.chat, color:"#ff8a3d"});
@@ -910,6 +938,9 @@ class App extends React.Component {
   _crashProcessExhaustion(){
     if (this.state.crashProcessing) return;
     clearInterval(this._crashInt);
+    // the cash-out click finally landed — chat's stick counter disarms
+    Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"dodge"});
+    HouseBand.play("crash.cashout", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
     this.setState({crashProcessing:true, crashButtonLabel:"PROCESSING CASH-OUT…"});
     setTimeout(()=>{
       const first = !this.state.crashCharacterWinUsed;
@@ -926,9 +957,9 @@ class App extends React.Component {
             +"Withdrawable balance: $0.00 (unchanged). One (1) character-building win per session (ToS §5.5). "
             +fundName+" survives with "+net+" BB. Use it wisely (you won't).",
         });
-        Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crash", roundId, wagered:true, priceBB:GAME_PRICES_BB.crash, netBB:net, kind:"character-win"});
+        this.settleRound("crash", roundId, "character-win", {netBB:net, surfaceStreak:0});
         HouseBand.play("crash.character-win", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
-        const tag = this.state.ident ? (this.state.ident.custom || this.state.ident.tag) : "You";
+        const tag = this.playerTagOrYou();
         this.pushTicker(tag+" DEFEATED THE HOUSE (net: "+(net>=0?"+":"")+net+" BB, house retains dignity)");
         this.pushChat({user:"NotABot_Trust", msg:"screenshot or it didn't happen", color:"#ffd54a"});
       } else {
@@ -938,7 +969,9 @@ class App extends React.Component {
           crashButtonLabel:"Cash Out (unavailable until you calm down)",
           crashResult:"Cash-out received 0.4s before the crash. Processing… declined (banker's discretion, ToS §1.3). "+fundName+" fully liquidated (as scheduled).",
         });
-        Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crash", roundId, wagered:true, priceBB:GAME_PRICES_BB.crash, netBB:-GAME_PRICES_BB.crash, kind:"crash-run"});
+        // the loss lands
+        Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId, beat:"stick"});
+        this.settleRound("crash", roundId, "crash-run", {surfaceStreak:consecutive});
         this.pushChat({user:"AdminTradeBot_69", msg:"§1.3'd", color:"#e24a4a"});
         if (consecutive >= 3 && consecutive % 3 === 0) this._crashConsolationRebate();
       }
@@ -953,7 +986,6 @@ class App extends React.Component {
     try {
       if ("pity" in patch) localStorage.setItem("hfes_crate_pity", String(patch.pity));
       if ("dupeIds" in patch) localStorage.setItem("hfes_crate_dupes", JSON.stringify(patch.dupeIds));
-      if ("inventory" in patch) localStorage.setItem("hfes_crate_inventory", JSON.stringify(patch.inventory.slice(0,200)));
     } catch (e) {}
   }
   buyKey(){
@@ -972,17 +1004,24 @@ class App extends React.Component {
   }
   claimDailyMomKey(){
     if (!this.state.crateMomKeyClaimableToday) return;
-    const streak = this.state.crateMomKeyStreak + 1;
-    const todayKey = new Date().toISOString().slice(0,10);
+    const todayKey = localDayKey();
+    let streak = 1;
     try {
+      const lastDay = localStorage.getItem("hfes_crate_momkey_day");
+      if (lastDay && lastDay === dayKeyBefore(todayKey)) {
+        streak = (this.state.crateMomKeyStreak || 0) + 1;
+      }
       localStorage.setItem("hfes_crate_momkey_day", todayKey);
       localStorage.setItem("hfes_crate_momkey_streak", String(streak));
     } catch (e) {}
     this.setState(s=>({
       crateMomKeyClaimableToday:false, crateMomKeyStreak:streak, crateFreeKeyCount:s.crateFreeKeyCount+1,
     }));
-    this.toast("MOM (envelope, return address: she doesn't know) — Days Mom Checked In: "+streak);
+    this.toast("MOM (envelope, return address: she doesn't know) — Days Mom Checked In: "+streak+(streak>=3 ? " — upgraded to Premium Mom Crate (Matte) (identical odds, shinier box)" : ""));
     this.pushTicker("A key arrived from Mom (no return address)");
+  }
+  dismissCrateEnvelope(){
+    this.setState({crateEnvelope:null});
   }
   openCrate(){
     if (this.state.crateOpening || !this.state.crateKeyBought) return;
@@ -991,8 +1030,9 @@ class App extends React.Component {
     this.setState({
       crateOpening:true, crateProgress:0, crateStage:"lock1", crateCaption:this._crateStages[0].caption,
       crateSkipAvailable:false, crateSkipUsed:false, crateResult:null, crateRevealPhase:null, crateAward:null, crateReel:null,
+      crateInspectOpen:false,
     });
-    HouseBand.play("crate.defuse", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1, loop:true});
+    HouseBand.play("crates.open", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
     this._crateRunStage(0);
   }
   _crateRunStage(idx){
@@ -1054,21 +1094,29 @@ class App extends React.Component {
     const dupe = this.state.crateDupeIds.includes(award.id);
     const pityRes = incrementPity(this.state.cratePity);
     const dupeIds = dupe ? this.state.crateDupeIds : [...this.state.crateDupeIds, award.id];
-    const inventory = dupe ? this.state.crateInventory : [{...award, ts:Date.now()}, ...this.state.crateInventory].slice(0,200);
+    // Holdings: non-dupe awards land in the shared inventory store (fake-win
+    // model, tradeable:false at award). Dupes are recycled for +0 credits.
+    if (!dupe) Inventory.award({id: award.id, name: award.name, value: award.value, source: "crates"});
+    const kind = kindForTier(award.tier);
     this.setState({
       crateOpening:false, crateKeyBought:false, crateRevealPhase:"award", crateAward:award,
-      crateDupeIds:dupeIds, crateInventory:inventory, cratePity:pityRes.value,
+      crateDupeIds:dupeIds, cratePity:pityRes.value,
       crateSessionOpened:this.state.crateSessionOpened+1,
       crateResult: dupe
         ? "Duplicate detected. Recycled. +0 Environmental Credits (rounded down, §8.9). ("+award.name+")"
         : "Added to Inventory · Non-Tradeable · Withdrawal ETA: pending (§1.3) — "+award.name,
     });
-    this.saveCratePersist({pity:pityRes.value, dupeIds, inventory});
-    Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crates", roundId, wagered, priceBB: wagered ? GAME_PRICES_BB.crates : 0, netBB: wagered ? -GAME_PRICES_BB.crates : 0, kind:"key-defused"});
-    HouseBand.play("crate.reveal", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+    this.saveCratePersist({pity:pityRes.value, dupeIds});
+    this.settleRound("crates", roundId, kind, {
+      wagered, priceBB: wagered ? GAME_PRICES_BB.crates : 0,
+      netBB: wagered ? -GAME_PRICES_BB.crates : 0,
+      itemAward: dupe ? null : award, nearMissItem: FRUIT_ROLL_UP,
+    });
+    HouseBand.play(kind === "legendary-win" || kind === "jackpot" ? "crates.legendary" : "crates.reveal", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+    this.toast("SO CLOSE! You were 1 slot from "+FRUIT_ROLL_UP.name+" ($"+FRUIT_ROLL_UP.value.toFixed(2)+"). (distance does not affect outcome; this reel is a movie; odds: yes)");
     if (pityRes.recalibrated) this.toast("PITY METER RECALIBRATED (mood improved!) (§8.9)");
     if (confettiEligible(award.tier)) this.confetti();
-    const tag = this.state.ident ? (this.state.ident.custom || this.state.ident.tag) : "someone";
+    const tag = this.playerTagOrYou();
     const template = CRATE_TICKER_TEMPLATES[Math.floor(Math.random()*CRATE_TICKER_TEMPLATES.length)];
     this.pushTicker(template.replace("{n}", tag));
     this.pushChat(CRATE_CHAT[Math.floor(Math.random()*CRATE_CHAT.length)]);
@@ -1290,6 +1338,8 @@ class App extends React.Component {
       crashStickActive: s.crashStickActive,
       crashCashoutClick:()=>this.crashCashoutClick(), crashDodgeAttempt:()=>this.crashDodgeAttempt(),
       cashoutDodgeX: s.crashOffset.x, cashoutDodgeY: s.crashOffset.y, cashoutScale: s.crashScale,
+      cashoutStick: s.crashStickActive && !s.crashExhausted && !s.crashProcessing,
+      cashoutScaleNow: (s.crashStickActive && !s.crashExhausted) ? s.crashScale * 1.2 : s.crashScale,
       crashButtonLabel: s.crashButtonLabel,
       crashExhausted: s.crashExhausted, crashProcessing: s.crashProcessing,
       cashoutColor: s.crashExhausted ? "#8fd97a" : (s.crashPhase==="climbing" ? "#ffcf9a" : "#5a4232"),
@@ -1303,22 +1353,26 @@ class App extends React.Component {
       // Loot Crate Defuser
       crateKeyBought:s.crateKeyBought, buyKey:()=>this.buyKey(), useFreeKey:()=>this.useFreeKey(),
       crateFreeKeyCount:s.crateFreeKeyCount,
-      crateBtnLabel: bb < GAME_PRICES_BB.crates ? "Ask Mom for Key Money" : "Single Virtual Key ("+GAME_PRICES_BB.crates+" BB)",
+      crateBtnLabel: bb < GAME_PRICES_BB.crates ? "Ask Mom for Key Money" : (s.crateRevealPhase==="award" ? "Open Another ("+GAME_PRICES_BB.crates+" BB)" : "Single Virtual Key ("+GAME_PRICES_BB.crates+" BB)"),
       crateBtnAction: bb < GAME_PRICES_BB.crates ? ()=>this.openAskMom({source:"crates"}) : ()=>this.buyKey(),
       crateOpening:s.crateOpening, crateProgress:Math.round(s.crateProgress), openCrate:()=>this.openCrate(),
       crateOpenLabel: s.crateOpening ? "Defusing... (unskippable)" : "Open Crate",
       crateStage:s.crateStage, crateCaption:s.crateCaption, trackNameCaption:TRACK_NAME_CAPTION,
       crateSkipAvailable:s.crateSkipAvailable, crateSkipUsed:s.crateSkipUsed, skipCrate:()=>this.skipCrate(),
       crateSkipLabel:"Skip — "+SKIP_PRICE_BB+" BB",
+      crateSkipFinePrint:"Skip reduces perceived time only. (delivery pending, §1.3)",
       crateReel:s.crateReel, crateRevealPhase:s.crateRevealPhase, crateAward:s.crateAward,
       fruitRollUp:FRUIT_ROLL_UP,
       crateResult:s.crateResult,
+      crateInspectOpen:s.crateInspectOpen, toggleInspectCrate:()=>this.setState(s2=>({crateInspectOpen:!s2.crateInspectOpen})),
       crateAnim: s.crateOpening ? "pulseGlow 0.6s infinite" : "none",
       cratePity:s.cratePity, cratePityLabel: "Pity Meter: "+s.cratePity+" / 50 — GUARANTEED Rare-or-better every 50 crates!™",
-      crateInventoryCount:s.crateInventory.length,
+      cratePityFinePrint:"pity progress may be recalculated based on mood · Rare-or-better is satisfiable by any tier labeled Rare *by us*",
+      crateInventoryCount:s.crateHeldCount,
       crateMomKeyClaimableToday:s.crateMomKeyClaimableToday, crateMomKeyStreak:s.crateMomKeyStreak,
       claimDailyMomKey:()=>this.claimDailyMomKey(),
       momKeyBoxLabel: s.crateMomKeyStreak>=3 ? "Premium Mom Crate (Matte)" : "MOM (envelope)",
+      crateEnvelope:s.crateEnvelope, dismissCrateEnvelope:()=>this.dismissCrateEnvelope(),
       catalog
     };
   }
@@ -1805,7 +1859,7 @@ class App extends React.Component {
                       {v.crashRunLabel && <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic"}}>{v.crashRunLabel}</div>}
                     </div>
                     {v.crashScheduling && (
-                      <div style={{marginBottom:"10px",background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"9px 11px",fontSize:"12px",color:"#e8a52a",fontStyle:"italic"}}>SCHEDULING… Crash scheduled. Provably fair. (Schedule not disclosed, ToS §5.5.)</div>
+                      <div style={{marginBottom:"10px",background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"9px 11px",fontSize:"12px",color:"#e8a52a",fontStyle:"italic"}}>SCHEDULING… Crash scheduled. Provably fair. (Schedule not disclosed, ToS §5.5.){v.crashCommitment ? <span style={{display:"block",marginTop:"3px",fontSize:"9.5px",color:"#8a6a52"}}>commitment: {v.crashCommitment} — preimage: the schedule (§5.5(b))</span> : null}</div>
                     )}
                     <div style={{position:"relative",height:"160px",border:v.crashStickActive?"2px solid #ffd54a":"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",overflow:"hidden"}}>
                       <div style={{position:"absolute",left:"20px",bottom:"16px",right:"20px",top:"16px"}}>
@@ -1832,11 +1886,11 @@ class App extends React.Component {
                         onClick={v.crashCashoutClick}
                         disabled={v.crashPhase!=="climbing" || v.crashProcessing}
                         style={{
-                          background: v.crashExhausted ? "linear-gradient(180deg,#8fd97a,#3a9a2a)" : "#3a2010",
-                          border: v.crashExhausted ? "2px solid #cfe4ff" : "2px dashed #ff5a14",
+                          background: (v.crashExhausted || v.cashoutStick) ? "linear-gradient(180deg,#8fd97a,#3a9a2a)" : "#3a2010",
+                          border: (v.crashExhausted || v.cashoutStick) ? "2px solid #cfe4ff" : "2px dashed #ff5a14",
                           color:v.cashoutColor,fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",
                           cursor: v.crashPhase==="climbing" ? "pointer" : "default",
-                          transform:`translate(${v.cashoutDodgeX}px, ${v.cashoutDodgeY}px) scale(${v.cashoutScale})`,
+                          transform:`translate(${v.cashoutDodgeX}px, ${v.cashoutDodgeY}px) scale(${v.cashoutScaleNow})`,
                           transition:"transform 0.12s ease-out",
                         }}
                       >{v.crashButtonLabel}</button>
@@ -1848,18 +1902,26 @@ class App extends React.Component {
                 {v.isCrates && (
                   <div>
                     <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Loot Crate Defuser</div>
-                    <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"12px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes.</div>
+                    <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"4px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes. <span style={{fontSize:"8px"}}>(Full table available on request. Requests are mood-dependent.)</span></div>
+                    <div style={{fontSize:"8.5px",color:"#6a4a38",marginBottom:"12px"}}>{v.cratePityFinePrint}</div>
+
+                    {v.crateEnvelope && v.crateEnvelope.kind==="consolation" && (
+                      <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
+                        <span style={{fontSize:"11.5px",color:"#ffd54a"}}>Consolation Key™ — wax seal: MOM. You lost. Have a key. Crates always feel like winning.®</span>
+                        <button onClick={v.dismissCrateEnvelope} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"11.5px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Take It (you will)</button>
+                      </div>
+                    )}
 
                     {v.crateMomKeyClaimableToday && (
-                      <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap"}}>
-                        <span style={{fontSize:"11.5px",color:"#ffd54a"}}>{v.momKeyBoxLabel} dropped from the top of the screen. Days Mom Checked In: {v.crateMomKeyStreak}.</span>
+                      <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
+                        <span style={{fontSize:"11.5px",color:"#ffd54a"}}>{v.momKeyBoxLabel} dropped from the top of the screen. Return address: MOM (she doesn't know). Days Mom Checked In: {v.crateMomKeyStreak}.</span>
                         <button onClick={v.claimDailyMomKey} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"11.5px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Claim Daily Mom Key</button>
                       </div>
                     )}
 
                     <div style={{display:"flex",gap:"24px",alignItems:"center",flexWrap:"wrap"}}>
-                      <div style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim}}>
-                        <div style={{position:"absolute",inset:"30% 0",height:"14px",background:"#7a5a2a"}}></div>
+                      <div key={v.momKeyBoxLabel} style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:v.crateMomKeyStreak>=3?"3px solid #ffd54a":"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim,boxShadow:v.crateMomKeyStreak>=3?"0 0 18px rgba(255,213,74,0.45)":"none"}}>
+                        <div style={{position:"absolute",inset:"30% 0",height:"14px",background:v.crateMomKeyStreak>=3?"#ffd54a":"#7a5a2a"}}></div>
                       </div>
                       <div style={{flex:1,minWidth:"220px"}}>
                         {!v.crateKeyBought && !v.crateOpening && (
@@ -1881,7 +1943,10 @@ class App extends React.Component {
                             </div>
                             <div style={{fontSize:"9.5px",color:"#8a6a52",marginTop:"6px"}}>{v.trackNameCaption}</div>
                             {v.crateSkipAvailable && !v.crateSkipUsed && (
-                              <button onClick={v.skipCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>{v.crateSkipLabel}</button>
+                              <div style={{marginTop:"8px"}}>
+                                <button onClick={v.skipCrate} style={{background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>{v.crateSkipLabel}</button>
+                                <div style={{fontSize:"6.5px",color:"#6a4a38",marginTop:"3px"}}>{v.crateSkipFinePrint}</div>
+                              </div>
                             )}
                           </>
                         )}
@@ -1901,12 +1966,13 @@ class App extends React.Component {
                         {v.crateRevealPhase==="award" && v.crateAward && (
                           <div>
                             <div style={{fontSize:"10.5px",color:"#a9705a",fontStyle:"italic",marginBottom:"6px"}}>SO CLOSE! You were 1 slot from {v.fruitRollUp.name} (${v.fruitRollUp.value.toFixed(2)}). <span style={{fontSize:"7px"}}>(distance does not affect outcome; this reel is a movie; odds: yes)</span></div>
-                            <div style={{border:`2px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"8px",padding:"12px",background:"linear-gradient(160deg,#241005,#160a04)"}}>
+                            <div key={v.crateAward.id} style={{border:`2px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"8px",padding:"12px",background:"linear-gradient(160deg,#241005,#160a04)",animation:"tierFlare 0.9s ease-out"}}>
                               <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:RARITY_COLORS[v.crateAward.tier]||"#ff8a3d",letterSpacing:"1px"}}>{v.crateAward.tier.toUpperCase()}</div>
                               <div style={{fontSize:"13px",fontWeight:800,color:"#ffe9d6",margin:"6px 0"}}>{v.crateAward.name}</div>
                               <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ Downloads: 4,000,000</div>
                               <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
                             </div>
+                            <button onClick={v.toggleInspectCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Inspect JPEG</button>
                           </div>
                         )}
                         {v.crateResult && v.crateRevealPhase!=="reel" && (
@@ -1978,6 +2044,23 @@ class App extends React.Component {
 
         {v.askmom && (
           <AskMomFlow source={v.askmom.source} enterStage={v.askmom.enterStage} panicActive={v.panicActive} hooks={v.askmomHooks} />
+        )}
+
+        {v.crateInspectOpen && v.crateAward && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.86)",zIndex:150,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={v.toggleInspectCrate}>
+            <div onClick={(e)=>e.stopPropagation()} style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:`3px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"10px",maxWidth:"420px",width:"100%",padding:"26px",textAlign:"center",boxShadow:"0 0 60px rgba(255,80,20,0.4)"}}>
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"22px",color:"#ffb347",letterSpacing:"1px",marginBottom:"10px"}}>INSPECT JPEG</div>
+              <div style={{border:`2px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"8px",padding:"20px",background:"repeating-linear-gradient(45deg,rgba(255,255,255,0.03),rgba(255,255,255,0.03) 12px,transparent 12px,transparent 24px)"}}>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"18px",color:RARITY_COLORS[v.crateAward.tier]||"#ff8a3d",letterSpacing:"1px"}}>{v.crateAward.tier.toUpperCase()}</div>
+                <div style={{fontSize:"17px",fontWeight:800,color:"#ffe9d6",margin:"12px 0"}}>{v.crateAward.name}</div>
+                <div style={{fontSize:"11px",color:"#e8a52a",transform:"rotate(-8deg)",margin:"8px 0",opacity:0.75}}>SAMPLE · DO NOT STEAL · hfes JPEGs</div>
+                <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ Downloads: 4,000,000</div>
+                <div style={{fontSize:"13px",color:"#8fd97a",fontWeight:800,marginTop:"8px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
+              </div>
+              <div style={{fontSize:"10px",color:"#a9705a",fontStyle:"italic",margin:"12px 0"}}>It's the same image, larger. The watermark is intact (it was never removable, §1.3).</div>
+              <button onClick={v.toggleInspectCrate} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"8px",cursor:"pointer"}}>Stop Inspecting</button>
+            </div>
+          </div>
         )}
 
         <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:v.momsGlow?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
