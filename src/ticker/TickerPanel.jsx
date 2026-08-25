@@ -52,11 +52,12 @@ export default class TickerPanel extends React.Component {
           TODAY'S WINNERS: {snap.winnersToday.toLocaleString("en-US")}
         </div>
 
-        {/* MARKET (HFES-10) — stub block for #27 (marketplace): swap the
-            controller's marketTick for the real composite (marketplace §10). */}
+        {/* MARKET (HFES-10) — the real composite since #27 (marketplace §10):
+            running-max display, down-ticks are display errors (§8.9). */}
         <div style={{ background: "#0e0a06", border: "1px solid #3a2a1a", borderRadius: "5px", padding: "6px 8px", marginBottom: "10px", fontSize: "10px", color: "#8fd97a", fontWeight: 700 }}>
           {snap.marketLabel}
           {snap.marketDelta && <div style={{ fontSize: "8.5px", color: "#a9705a", fontWeight: 400 }}>{snap.marketDelta}</div>}
+          {snap.marketFootnote && <div style={{ fontSize: "7px", color: "rgba(232,201,172,0.14)", fontWeight: 400, marginTop: "2px" }}>{snap.marketFootnote}</div>}
         </div>
 
         {visible.map((e) => {
