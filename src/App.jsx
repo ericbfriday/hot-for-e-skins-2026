@@ -14,6 +14,18 @@ import {
   V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE, REFILL_PACKAGES,
   NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY
 } from "./spine/constants.js";
+import { HouseBand, BAND_PRIORITIES } from "./spine/band.js";
+import { Vault } from "./spine/vault.js";
+import {
+  fundNameForRun, dodgeStage, dodgeLabel, dodgeOffset, dodgeScale,
+  scriptRun, computeExhaustionPayout, CRASH_REBATE_BB,
+} from "./games/crash.js";
+import {
+  defuseDurationMs, buildDefuseStages, TRACK_NAME_CAPTION,
+  FRUIT_ROLL_UP, pickAward, confettiEligible, buildReelStrip,
+  incrementPity, CRATE_TICKER_TEMPLATES, CRATE_CHAT,
+  SKIP_PRICE_BB, SKIP_STALL_EXTENSION_MS, SKIP_JUMP_PCT, SKIP_APPEARS_AT_PCT,
+} from "./games/crates.js";
 
 const PKG_NAME = Object.fromEntries(REFILL_PACKAGES.map((p) => [p.id, p.name]));
 
@@ -188,8 +200,20 @@ class App extends React.Component {
     ticker:[], chat:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
     coinFlipping:false, coinResult:null,
-    crashRunning:false, crashMult:1.00, crashCrashed:false, crashResult:null, cashoutDodge:0,
-    crateKeyBought:false, crateOpening:false, crateProgress:0, crateResult:null
+
+    // College Fund Crash (session-scoped theater; balance itself lives in balanceBB)
+    crashPhase:"idle", crashMult:1.00, crashCrashed:false, crashResult:null,
+    crashDodges:0, crashExhausted:false, crashOffset:{x:0,y:0}, crashScale:1,
+    crashButtonLabel:"Cash Out", crashStickActive:false, crashProcessing:false,
+    crashRunCount:0, crashConsecutiveLosses:0, crashCharacterWinUsed:false,
+
+    // Loot Crate Defuser
+    crateKeyBought:false, crateOpening:false, crateProgress:0, crateResult:null,
+    crateStage:null, crateCaption:"", crateSkipAvailable:false, crateSkipUsed:false,
+    crateReel:null, crateRevealPhase:null, crateAward:null,
+    crateSessionOpened:0, crateFreeKeyCount:0,
+    cratePity:0, crateDupeIds:[], crateInventory:[],
+    crateMomKeyClaimableToday:false, crateMomKeyStreak:0,
   };
 
   _tosScrollRef = React.createRef();
@@ -229,6 +253,22 @@ class App extends React.Component {
         welcomeToast = sess.toast;
       }
     }
+    let cratePity = 0, crateDupeIds = [], crateInventory = [];
+    let crateMomKeyStreak = 0, crateMomKeyClaimableToday = false;
+    try {
+      const p = parseInt(localStorage.getItem("hfes_crate_pity"), 10);
+      cratePity = Number.isFinite(p) && p >= 0 && p < 50 ? p : 0;
+      crateDupeIds = JSON.parse(localStorage.getItem("hfes_crate_dupes") || "[]");
+      if (!Array.isArray(crateDupeIds)) crateDupeIds = [];
+      crateInventory = JSON.parse(localStorage.getItem("hfes_crate_inventory") || "[]");
+      if (!Array.isArray(crateInventory)) crateInventory = [];
+      const streak = parseInt(localStorage.getItem("hfes_crate_momkey_streak"), 10);
+      crateMomKeyStreak = Number.isFinite(streak) && streak >= 0 ? streak : 0;
+      const todayKey = new Date().toISOString().slice(0, 10);
+      const lastDay = localStorage.getItem("hfes_crate_momkey_day");
+      crateMomKeyClaimableToday = lastDay !== todayKey;
+    } catch (e) {}
+
     let oc = loadOC();
     let bonus = loadBonus();
     if (bonus && Date.now() >= bonus.expiresAt) {
@@ -241,6 +281,7 @@ class App extends React.Component {
       tosAcceptedEver, tosNeedsConsent:!tosAcceptedEver,
       ident:Identity.get(), stats:Identity.getStats(),
       balanceOC:oc, bonusOC:bonus, streakChip: loadDepositStats().streak,
+      cratePity, crateDupeIds, crateInventory, crateMomKeyStreak, crateMomKeyClaimableToday,
     });
     this.saveBalance(balance);
     if (welcomeToast) this.toast(welcomeToast);
@@ -269,6 +310,15 @@ class App extends React.Component {
         this.toast("VIP TIER: MOM'S FAVORITE (full). It unlocks nothing. The house appreciates you.");
       }
       this.setState({streakChip: loadDepositStats().streak});
+    });
+    this._consolationKeyClaimed = false;
+    this._offMilestone = Bus.on(EVENTS.STATS_MILESTONE, (p)=>{
+      if (p && p.field === "lossStreak" && p.value === 3 && !this._consolationKeyClaimed) {
+        this._consolationKeyClaimed = true;
+        this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount+1}));
+        this.toast("Consolation Key™ arrived from Mom (she doesn't know). You lost. Have a key. Crates always feel like winning.®");
+        this.pushTicker("A key arrived from Mom (no return address)");
+      }
     });
     this._lastInput = Date.now();
     this._lastIdleNag = 0;
@@ -326,9 +376,12 @@ class App extends React.Component {
     clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
     clearTimeout(this._ocFlyTimer); clearTimeout(this._creditReplayTimer);
     clearTimeout(this._tosDwellT); clearInterval(this._tosTick);
+    clearTimeout(this._crateStageTimer); clearInterval(this._crateMoveInt);
+    clearTimeout(this._crateRevealTimer1); clearTimeout(this._crateRevealTimer2);
     if (this._offMood) this._offMood();
     if (this._offIdent) this._offIdent();
     if (this._offDeposit) this._offDeposit();
+    if (this._offMilestone) this._offMilestone();
     if (this._activity) {
       window.removeEventListener("pointerdown", this._activity);
       window.removeEventListener("keydown", this._activity);
@@ -525,57 +578,267 @@ class App extends React.Component {
     }, 2000);
   }
 
+  // ---- College Fund Crash ----
   startCrash(){
-    if (this.state.crashRunning) return;
+    if (this.state.crashPhase !== "idle" && this.state.crashPhase !== "crashed") return;
     if (!this.spendBB("crash")) return;
     const roundId = this.nextRoundId();
+    const runCount = this.state.crashRunCount + 1;
+    this._crashRoundId = roundId;
     Bus.emit(EVENTS.ROUND_STARTED, {surface:"crash", roundId, priceBB:GAME_PRICES_BB.crash, wagered:true});
-    this.setState({crashRunning:true, crashMult:1.00, crashCrashed:false, crashResult:null, cashoutDodge:0});
-    const stopAt = 2000 + Math.random()*4000;
-    this._crashInt = setInterval(()=>{
-      this.setState(s=>({crashMult: s.crashMult + Math.random()*0.08}));
-    }, 100);
-    setTimeout(()=>{
-      clearInterval(this._crashInt);
-      const finalMult = Math.random() < 0.5 ? 0.00 : 1.01;
-      this.setState({crashRunning:false, crashCrashed:true, crashMult:finalMult, crashResult:"CRASHED at "+finalMult.toFixed(2)+"x. Cash-out was evaded "+this.state.cashoutDodge+" time(s)."});
-      this.settleRound("crash", roundId, "house-win");
-      this.setState(s=>({ticker:["The College Fund crashed at "+finalMult.toFixed(2)+"x (as scheduled)", ...s.ticker].slice(0,8)}));
-    }, stopAt);
+    HouseBand.play("crash.start", {priority:BAND_PRIORITIES.P2_GAME, volume:0.8});
+    this.setState({
+      crashPhase:"scheduling", crashRunCount:runCount, crashDodges:0, crashExhausted:false,
+      crashMult:1.00, crashCrashed:false, crashResult:null, crashOffset:{x:0,y:0}, crashScale:1,
+      crashButtonLabel:"Cash Out", crashStickActive:false, crashProcessing:false,
+    });
+    if (runCount === 1) this.pushChat({user:"xX_QuickScope_Xx", msg:"here we go again", color:"#ff8a3d"});
+    setTimeout(()=>this._crashBeginClimb(), 600);
   }
-  dodgeCashout(){
-    if (!this.state.crashRunning) return;
-    this.setState(s=>({cashoutDodge:s.cashoutDodge+1, cashoutDodge2: (s.cashoutDodge+1)}));
-    this.setState({cashoutDodge: this.state.cashoutDodge, });
-    const dodge = (Math.random()>0.5?1:-1)*(30+Math.random()*40);
-    this.setState(s=>({cashoutDodge: dodge}));
+  _crashBeginClimb(){
+    const script = scriptRun(this.state.crashConsecutiveLosses);
+    this._crashScript = script;
+    this._crashStickTriggered = false;
+    this.setState({crashPhase:"climbing"});
+    const start = Date.now();
+    let pausedMs = 0;
+    clearInterval(this._crashInt);
+    this._crashInt = setInterval(()=>{
+      if (this.state.crashStickActive) return;
+      const elapsed = Date.now() - start - pausedMs;
+      const progress = Math.min(1, elapsed / script.duration);
+      const mult = 1 + progress * (script.peakDisplay - 1);
+      if (script.hasStick && !this._crashStickTriggered && mult >= script.stickValue) {
+        this._crashStickTriggered = true;
+        const stickStart = Date.now();
+        this.setState({crashMult:script.stickValue, crashStickActive:true});
+        Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"stick"});
+        this.pushChat({
+          user:"definitely_your_conscience",
+          msg: this.state.crashConsecutiveLosses >= 3 ? "take it… take it…" : "CASH OUT CASH OUT CASH OUT",
+          color:"#e8c9ac",
+        });
+        setTimeout(()=>{ pausedMs += Date.now() - stickStart; this.setState({crashStickActive:false}); }, script.stickDurationMs);
+        return;
+      }
+      this.setState({crashMult:mult});
+      if (progress >= 1) {
+        clearInterval(this._crashInt);
+        this._crashFinalize();
+      }
+    }, 100);
+  }
+  _crashFinalize(){
+    const script = this._crashScript;
+    const consecutive = this.state.crashConsecutiveLosses + 1;
+    const fundName = fundNameForRun(this.state.crashRunCount);
+    const stickLine = script.hasStick ? (" You had "+script.stickValue.toFixed(2)+"x. Everyone saw it. (Playback not available, ToS §1.3.)") : "";
+    this.setState({
+      crashPhase:"crashed", crashCrashed:true, crashMult:script.crashHeadline, crashConsecutiveLosses:consecutive,
+      crashResult: "CRASHED at "+script.crashHeadline.toFixed(2)+"x (as scheduled). Peak display: "+script.peakDisplay.toFixed(2)+"x. The peak display was decorative."
+        + stickLine + " " + fundName + " fully liquidated (as scheduled).",
+    });
+    Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crash", roundId:this._crashRoundId, wagered:true, priceBB:GAME_PRICES_BB.crash, netBB:-GAME_PRICES_BB.crash, kind:"crash-run"});
+    HouseBand.play("crash.crashed", {priority:BAND_PRIORITIES.P2_GAME, volume:0.8});
+    this.pushTicker("The College Fund crashed at "+script.crashHeadline.toFixed(2)+"x (as scheduled)");
+    this.pushChat({user:"AdminTradeBot_69", msg:"as scheduled 📉", color:"#e24a4a"});
+    if (consecutive >= 3 && consecutive % 3 === 0) this._crashConsolationRebate();
+  }
+  _crashConsolationRebate(){
+    const remaining = Math.max(0, GAME_PRICES_BB.crash - (this.state.balanceBB + CRASH_REBATE_BB));
+    this.awardBB(CRASH_REBATE_BB, "crash-rebate");
+    this.toast("Consolation Rebate: +"+CRASH_REBATE_BB+" BB (non-stackable, non-withdrawable, non-consoling)");
+    this.pushTicker("Consolation issued. You're "+fmtBB(remaining)+" BB from another run. So close.");
+  }
+  crashDodgeAttempt(){
+    if (this.state.crashPhase !== "climbing" || this.state.crashExhausted) return;
+    const n = this.state.crashDodges + 1;
+    const info = dodgeStage(n);
+    const exhausted = n >= 7;
+    this.setState({
+      crashDodges:n,
+      crashOffset: exhausted ? {x:0,y:0} : dodgeOffset(n),
+      crashScale: dodgeScale(n),
+      crashButtonLabel: dodgeLabel(n),
+      crashExhausted: exhausted,
+    });
+    if (exhausted) {
+      Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"exhaustion"});
+      this.pushChat({user:"MOD_Chad_Official", msg:info.chat, color:"#8fd97a"});
+    } else if (Math.random() < 0.4) {
+      this.pushChat({user:"xX_QuickScope_Xx", msg:info.chat, color:"#ff8a3d"});
+    }
+  }
+  crashCashoutClick(){
+    if (this.state.crashPhase !== "climbing") return;
+    if (!this.state.crashExhausted) { this.crashDodgeAttempt(); return; }
+    this._crashProcessExhaustion();
+  }
+  _crashProcessExhaustion(){
+    if (this.state.crashProcessing) return;
+    clearInterval(this._crashInt);
+    this.setState({crashProcessing:true, crashButtonLabel:"PROCESSING CASH-OUT…"});
+    setTimeout(()=>{
+      const first = !this.state.crashCharacterWinUsed;
+      const roundId = this._crashRoundId;
+      const fundName = fundNameForRun(this.state.crashRunCount);
+      if (first) {
+        const {payout, net} = computeExhaustionPayout(this.state.crashMult);
+        this.awardBB(payout, "crash-character-win");
+        this.setState({
+          crashPhase:"crashed", crashCharacterWinUsed:true, crashCrashed:false, crashProcessing:false,
+          crashConsecutiveLosses:0,
+          crashResult: "PROCESSING CASH-OUT… succeeded. Payout "+payout+" BB (net "+(net>=0?"+":"")+net+" BB). "
+            +"Crash Containment Fee 7.3%, Pre-Crash Processing Fee 5 BB, Maternal Gratuity 1 BB, §8.9 rounding (down). "
+            +"Withdrawable balance: $0.00 (unchanged). One (1) character-building win per session (ToS §5.5). "
+            +fundName+" survives with "+net+" BB. Use it wisely (you won't).",
+        });
+        Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crash", roundId, wagered:true, priceBB:GAME_PRICES_BB.crash, netBB:net, kind:"character-win"});
+        HouseBand.play("crash.character-win", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+        const tag = this.state.ident ? (this.state.ident.custom || this.state.ident.tag) : "You";
+        this.pushTicker(tag+" DEFEATED THE HOUSE (net: "+(net>=0?"+":"")+net+" BB, house retains dignity)");
+        this.pushChat({user:"NotABot_Trust", msg:"screenshot or it didn't happen", color:"#ffd54a"});
+      } else {
+        const consecutive = this.state.crashConsecutiveLosses + 1;
+        this.setState({
+          crashPhase:"crashed", crashCrashed:true, crashProcessing:false, crashConsecutiveLosses:consecutive,
+          crashButtonLabel:"Cash Out (unavailable until you calm down)",
+          crashResult:"Cash-out received 0.4s before the crash. Processing… declined (banker's discretion, ToS §1.3). "+fundName+" fully liquidated (as scheduled).",
+        });
+        Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crash", roundId, wagered:true, priceBB:GAME_PRICES_BB.crash, netBB:-GAME_PRICES_BB.crash, kind:"crash-run"});
+        this.pushChat({user:"AdminTradeBot_69", msg:"§1.3'd", color:"#e24a4a"});
+        if (consecutive >= 3 && consecutive % 3 === 0) this._crashConsolationRebate();
+      }
+    }, 400);
+  }
+  expressCashoutClick(){
+    this.toast("Pending since you arrived (ToS §1.3).");
   }
 
+  // ---- Loot Crate Defuser ----
+  saveCratePersist(patch){
+    try {
+      if ("pity" in patch) localStorage.setItem("hfes_crate_pity", String(patch.pity));
+      if ("dupeIds" in patch) localStorage.setItem("hfes_crate_dupes", JSON.stringify(patch.dupeIds));
+      if ("inventory" in patch) localStorage.setItem("hfes_crate_inventory", JSON.stringify(patch.inventory.slice(0,200)));
+    } catch (e) {}
+  }
   buyKey(){
     if (!this.spendBB("crates")) return;
     this._crateRound = this.nextRoundId();
+    this._crateWagered = true;
     Bus.emit(EVENTS.ROUND_STARTED, {surface:"crates", roundId:this._crateRound, priceBB:GAME_PRICES_BB.crates, wagered:true});
     this.setState({crateKeyBought:true});
   }
+  useFreeKey(){
+    if (this.state.crateFreeKeyCount <= 0) return;
+    this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount-1, crateKeyBought:true}));
+    this._crateRound = this.nextRoundId();
+    this._crateWagered = false;
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"crates", roundId:this._crateRound, priceBB:0, wagered:false});
+  }
+  claimDailyMomKey(){
+    if (!this.state.crateMomKeyClaimableToday) return;
+    const streak = this.state.crateMomKeyStreak + 1;
+    const todayKey = new Date().toISOString().slice(0,10);
+    try {
+      localStorage.setItem("hfes_crate_momkey_day", todayKey);
+      localStorage.setItem("hfes_crate_momkey_streak", String(streak));
+    } catch (e) {}
+    this.setState(s=>({
+      crateMomKeyClaimableToday:false, crateMomKeyStreak:streak, crateFreeKeyCount:s.crateFreeKeyCount+1,
+    }));
+    this.toast("MOM (envelope, return address: she doesn't know) — Days Mom Checked In: "+streak);
+    this.pushTicker("A key arrived from Mom (no return address)");
+  }
   openCrate(){
-    if (this.state.crateOpening) return;
-    this.setState({crateOpening:true, crateProgress:0, crateResult:null});
-    const total = (this.props.crateOpenSeconds ?? 15) * 1000;
-    const step = 150;
-    this._crateInt = setInterval(()=>{
+    if (this.state.crateOpening || !this.state.crateKeyBought) return;
+    const totalMs = defuseDurationMs(this.state.crateSessionOpened);
+    this._crateStages = buildDefuseStages(totalMs, 0);
+    this.setState({
+      crateOpening:true, crateProgress:0, crateStage:"lock1", crateCaption:this._crateStages[0].caption,
+      crateSkipAvailable:false, crateSkipUsed:false, crateResult:null, crateRevealPhase:null, crateAward:null, crateReel:null,
+    });
+    HouseBand.play("crate.defuse", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1, loop:true});
+    this._crateRunStage(0);
+  }
+  _crateRunStage(idx){
+    const stages = this._crateStages;
+    if (!stages) return;
+    if (idx >= stages.length) { this._crateDefuseComplete(); return; }
+    const seg = stages[idx];
+    this.setState({crateStage:seg.key, crateCaption:seg.caption});
+    if (seg.type === "hold") {
+      this.setState({crateProgress:seg.at});
+      Bus.emit(EVENTS.ROUND_BEAT, {surface:"crates", roundId:this._crateRound, beat: seg.key === "stallB" ? "drop" : "stall"});
+      clearTimeout(this._crateStageTimer);
+      this._crateStageTimer = setTimeout(()=>this._crateRunStage(idx+1), seg.ms);
+      return;
+    }
+    const from = seg.from, to = seg.to, ms = seg.ms, start = Date.now();
+    clearInterval(this._crateMoveInt);
+    this._crateMoveInt = setInterval(()=>{
+      const el = Date.now() - start;
+      const p = Math.min(1, el / ms);
+      const val = from + (to - from) * p;
       this.setState(s=>{
-        const np = Math.min(100, s.crateProgress + (step/total)*100);
-        return {crateProgress:np};
+        const patch = {crateProgress:val};
+        if (seg.key === "lock1" && val >= SKIP_APPEARS_AT_PCT && !s.crateSkipUsed && !s.crateSkipAvailable) patch.crateSkipAvailable = true;
+        return patch;
       });
-    }, step);
-    setTimeout(()=>{
-      clearInterval(this._crateInt);
-      const awards = ["Generic Stock Photo of Handshake.jpg (Non-Tradeable)","Royalty-Free Sunset Over Water.jpg (Non-Tradeable)","Clip Art of a Trophy.png (Non-Tradeable)","Stock Photo of Confused Businessman.jpg (Non-Tradeable)"];
-      const a = awards[Math.floor(Math.random()*awards.length)];
-      this.setState({crateOpening:false, crateProgress:100, crateResult:"Crate defused. You received: "+a, crateKeyBought:false});
-      this.settleRound("crates", this._crateRound, "key-defused");
-      this.setState(s=>({ticker:["A crate was opened. A JPEG was awarded. Nobody won.", ...s.ticker].slice(0,8)}));
-    }, total);
+      if (p >= 1) {
+        clearInterval(this._crateMoveInt);
+        this._crateRunStage(idx+1);
+      }
+    }, 100);
+  }
+  skipCrate(){
+    if (!this.state.crateSkipAvailable || this.state.crateSkipUsed) return;
+    if (!this.payBB(SKIP_PRICE_BB, "crate-skip")) return;
+    this.setState(s=>({
+      crateProgress:Math.min(100, s.crateProgress+SKIP_JUMP_PCT), crateSkipUsed:true, crateSkipAvailable:false,
+    }));
+    if (this._crateStages && this._crateStages[3]) this._crateStages[3].ms += SKIP_STALL_EXTENSION_MS;
+    this.toast("Skip confirmed — ETA improved");
+  }
+  _crateDefuseComplete(){
+    clearInterval(this._crateMoveInt); clearTimeout(this._crateStageTimer);
+    const award = pickAward();
+    this._crateAwardPending = award;
+    const initial = buildReelStrip(award, false);
+    this.setState({crateProgress:100, crateReel:{...initial, recalibrated:false}, crateRevealPhase:"reel"});
+    Bus.emit(EVENTS.ROUND_BEAT, {surface:"crates", roundId:this._crateRound, beat:"recalibration"});
+    clearTimeout(this._crateRevealTimer1); clearTimeout(this._crateRevealTimer2);
+    this._crateRevealTimer1 = setTimeout(()=>{
+      const recal = buildReelStrip(award, true);
+      this.setState({crateReel:{...recal, recalibrated:true}});
+    }, 2400);
+    this._crateRevealTimer2 = setTimeout(()=>this._crateFinishAward(award), 3450);
+  }
+  _crateFinishAward(award){
+    const wagered = this._crateWagered;
+    const roundId = this._crateRound;
+    const dupe = this.state.crateDupeIds.includes(award.id);
+    const pityRes = incrementPity(this.state.cratePity);
+    const dupeIds = dupe ? this.state.crateDupeIds : [...this.state.crateDupeIds, award.id];
+    const inventory = dupe ? this.state.crateInventory : [{...award, ts:Date.now()}, ...this.state.crateInventory].slice(0,200);
+    this.setState({
+      crateOpening:false, crateKeyBought:false, crateRevealPhase:"award", crateAward:award,
+      crateDupeIds:dupeIds, crateInventory:inventory, cratePity:pityRes.value,
+      crateSessionOpened:this.state.crateSessionOpened+1,
+      crateResult: dupe
+        ? "Duplicate detected. Recycled. +0 Environmental Credits (rounded down, §8.9). ("+award.name+")"
+        : "Added to Inventory · Non-Tradeable · Withdrawal ETA: pending (§1.3) — "+award.name,
+    });
+    this.saveCratePersist({pity:pityRes.value, dupeIds, inventory});
+    Bus.emit(EVENTS.ROUND_SETTLED, {surface:"crates", roundId, wagered, priceBB: wagered ? GAME_PRICES_BB.crates : 0, netBB: wagered ? -GAME_PRICES_BB.crates : 0, kind:"key-defused"});
+    HouseBand.play("crate.reveal", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+    if (pityRes.recalibrated) this.toast("PITY METER RECALIBRATED (mood improved!) (§8.9)");
+    if (confettiEligible(award.tier)) this.confetti();
+    const tag = this.state.ident ? (this.state.ident.custom || this.state.ident.tag) : "someone";
+    const template = CRATE_TICKER_TEMPLATES[Math.floor(Math.random()*CRATE_TICKER_TEMPLATES.length)];
+    this.pushTicker(template.replace("{n}", tag));
+    this.pushChat(CRATE_CHAT[Math.floor(Math.random()*CRATE_CHAT.length)]);
   }
 
   openAskMom(opts={}){
@@ -636,6 +899,16 @@ class App extends React.Component {
   }
   pushTicker(line){
     this.setState(s=>({ticker:[line, ...s.ticker].slice(0,8)}));
+  }
+  pushChat(entry){
+    this.setState(s=>({chat:[entry, ...s.chat].slice(0,6)}));
+  }
+  awardBB(amount, reason){
+    if (!(amount > 0)) return;
+    const nb = this.state.balanceBB + amount;
+    this.setState({balanceBB:nb}); this.saveBalance(nb);
+    Bus.emit(EVENTS.BB_CREDITED, {amount, reason});
+    Regime.evaluate(nb);
   }
   cooldownStart(){
     clearInterval(this._coolInt);
@@ -733,8 +1006,8 @@ class App extends React.Component {
       },
       replayRoulette: s.rouletteResult && bb < GAME_PRICES_BB.roulette, topUpAndPlayRoulette:()=>this.topUpAndPlay("roulette"),
       replayCoinflip: s.coinResult && bb < GAME_PRICES_BB.coinflip, topUpAndPlayCoinflip:()=>this.topUpAndPlay("coinflip"),
-      replayCrash: s.crashResult && bb < GAME_PRICES_BB.crash, topUpAndPlayCrash:()=>this.topUpAndPlay("crash"),
-      replayCrates: s.crateResult && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
+      replayCrash: s.crashPhase==="crashed" && bb < GAME_PRICES_BB.crash, topUpAndPlayCrash:()=>this.topUpAndPlay("crash"),
+      replayCrates: !s.crateOpening && !s.crateKeyBought && s.crateFreeKeyCount<=0 && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
       ticker:s.ticker, chat:s.chat,
@@ -748,19 +1021,49 @@ class App extends React.Component {
       coinFlipping:s.coinFlipping, coinResult:s.coinResult, playCoinflip:()=>this.playCoinflip(),
       coinBtnLabel: s.coinFlipping ? "Flipping..." : ("Flip ("+GAME_PRICES_BB.coinflip+" BB)"),
       coinAnim: s.coinFlipping ? "coinFlip 2s ease-in-out" : "none",
-      crashRunning:s.crashRunning, crashResult:s.crashResult, startCrash:()=>this.startCrash(),
-      crashStartLabel: s.crashRunning ? "Running..." : ("Start Run ("+GAME_PRICES_BB.crash+" BB)"),
+      // College Fund Crash
+      crashPhase:s.crashPhase,
+      crashRunning: s.crashPhase==="climbing" || s.crashPhase==="scheduling", crashResult:s.crashResult,
+      crashScheduling: s.crashPhase==="scheduling",
+      startCrash:()=>this.startCrash(),
+      crashFundName: fundNameForRun(s.crashRunCount || 1),
+      crashRunLabel: s.crashRunCount>0 ? ("RUN #"+s.crashRunCount+" — "+fundNameForRun(s.crashRunCount)) : "",
+      crashStartLabel: s.crashPhase==="scheduling" ? "SCHEDULING…" : (s.crashPhase==="climbing" ? "Running..." : (s.crashRunCount>0 ? "Run It Back ("+GAME_PRICES_BB.crash+" BB)" : "Start Run ("+GAME_PRICES_BB.crash+" BB)")),
       crashMultDisplay: s.crashMult.toFixed(2)+"x",
-      crashColor: s.crashCrashed ? "#ff4444" : "#8fd97a",
+      crashColor: s.crashCrashed ? "#ff4444" : (s.crashStickActive ? "#ffd54a" : "#8fd97a"),
       crashBarHeight: Math.min(95, (s.crashMult-1)*40),
-      dodgeCashout:()=>this.dodgeCashout(), cashoutDodge:s.cashoutDodge,
-      cashoutColor: s.crashRunning ? "#ffcf9a" : "#5a4232",
-      crateKeyBought:s.crateKeyBought, buyKey:()=>this.buyKey(),
-      crateBtnLabel: "Buy Virtual Key ("+GAME_PRICES_BB.crates+" BB)",
+      crashStickActive: s.crashStickActive,
+      crashCashoutClick:()=>this.crashCashoutClick(), crashDodgeAttempt:()=>this.crashDodgeAttempt(),
+      cashoutDodgeX: s.crashOffset.x, cashoutDodgeY: s.crashOffset.y, cashoutScale: s.crashScale,
+      crashButtonLabel: s.crashButtonLabel,
+      crashExhausted: s.crashExhausted, crashProcessing: s.crashProcessing,
+      cashoutColor: s.crashExhausted ? "#8fd97a" : (s.crashPhase==="climbing" ? "#ffcf9a" : "#5a4232"),
+      crashInterstitial: s.crashPhase==="crashed",
+      crashComeInThrees: s.crashConsecutiveLosses>=2,
+      expressCashoutLabel: "ExpressCashout™ (eta: "+(s.moodWord||"pending")+")",
+      expressCashoutClick:()=>this.expressCashoutClick(),
+      crashCanRun: bb >= GAME_PRICES_BB.crash,
+      crashNeedBBLabel: "Run It Back (need "+GAME_PRICES_BB.crash+" BB, have "+fmtBB(bb)+")",
+
+      // Loot Crate Defuser
+      crateKeyBought:s.crateKeyBought, buyKey:()=>this.buyKey(), useFreeKey:()=>this.useFreeKey(),
+      crateFreeKeyCount:s.crateFreeKeyCount,
+      crateBtnLabel: bb < GAME_PRICES_BB.crates ? "Ask Mom for Key Money" : "Single Virtual Key ("+GAME_PRICES_BB.crates+" BB)",
+      crateBtnAction: bb < GAME_PRICES_BB.crates ? ()=>this.openAskMom({source:"crates"}) : ()=>this.buyKey(),
       crateOpening:s.crateOpening, crateProgress:Math.round(s.crateProgress), openCrate:()=>this.openCrate(),
-      crateOpenLabel: s.crateOpening ? "Opening... (unskippable)" : "Open Crate",
+      crateOpenLabel: s.crateOpening ? "Defusing... (unskippable)" : "Open Crate",
+      crateStage:s.crateStage, crateCaption:s.crateCaption, trackNameCaption:TRACK_NAME_CAPTION,
+      crateSkipAvailable:s.crateSkipAvailable, crateSkipUsed:s.crateSkipUsed, skipCrate:()=>this.skipCrate(),
+      crateSkipLabel:"Skip — "+SKIP_PRICE_BB+" BB",
+      crateReel:s.crateReel, crateRevealPhase:s.crateRevealPhase, crateAward:s.crateAward,
+      fruitRollUp:FRUIT_ROLL_UP,
       crateResult:s.crateResult,
       crateAnim: s.crateOpening ? "pulseGlow 0.6s infinite" : "none",
+      cratePity:s.cratePity, cratePityLabel: "Pity Meter: "+s.cratePity+" / 50 — GUARANTEED Rare-or-better every 50 crates!™",
+      crateInventoryCount:s.crateInventory.length,
+      crateMomKeyClaimableToday:s.crateMomKeyClaimableToday, crateMomKeyStreak:s.crateMomKeyStreak,
+      claimDailyMomKey:()=>this.claimDailyMomKey(),
+      momKeyBoxLabel: s.crateMomKeyStreak>=3 ? "Premium Mom Crate (Matte)" : "MOM (envelope)",
       catalog
     };
   }
@@ -1130,51 +1433,116 @@ class App extends React.Component {
 
                 {v.isCrash && (
                   <div>
-                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"14px"}}>College Fund Crash</div>
-                    <div style={{position:"relative",height:"160px",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",overflow:"hidden"}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",flexWrap:"wrap",gap:"8px",marginBottom:"6px"}}>
+                      <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347"}}>College Fund Crash</div>
+                      {v.crashRunLabel && <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic"}}>{v.crashRunLabel}</div>}
+                    </div>
+                    {v.crashScheduling && (
+                      <div style={{marginBottom:"10px",background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"9px 11px",fontSize:"12px",color:"#e8a52a",fontStyle:"italic"}}>SCHEDULING… Crash scheduled. Provably fair. (Schedule not disclosed, ToS §5.5.)</div>
+                    )}
+                    <div style={{position:"relative",height:"160px",border:v.crashStickActive?"2px solid #ffd54a":"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",overflow:"hidden"}}>
                       <div style={{position:"absolute",left:"20px",bottom:"16px",right:"20px",top:"16px"}}>
                         <div style={{position:"absolute",left:0,bottom:0,width:"4px",background:"linear-gradient(#8fd97a,#4aa832)",height:`${v.crashBarHeight}%`,borderRadius:"2px 2px 0 0",transition:"height 0.15s linear"}}></div>
                       </div>
-                      <div style={{position:"absolute",right:"16px",top:"14px",fontFamily:"'Bangers',cursive",fontSize:"28px",color:v.crashColor}}>{v.crashMultDisplay}</div>
+                      <div style={{position:"absolute",right:"16px",top:"14px",fontFamily:"'Bangers',cursive",fontSize:"28px",color:v.crashColor,animation: v.crashStickActive ? "pulseGlow 0.3s infinite" : "none"}}>{v.crashMultDisplay}</div>
+                      {v.crashStickActive && (
+                        <div style={{position:"absolute",left:"16px",top:"14px",fontSize:"11px",color:"#ffd54a",fontWeight:800}}>chat: CASH OUT CASH OUT CASH OUT</div>
+                      )}
                     </div>
+                    {v.crashComeInThrees && v.crashPhase!=="climbing" && (
+                      <div style={{marginTop:"8px",fontSize:"10.5px",color:"#a9705a",fontStyle:"italic"}}>Crashes come in threes. This is a fact we made up.</div>
+                    )}
                     {v.crashResult && (
                       <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.crashResult}</div>
                     )}
-                    {v.replayCrash && (
-                      <button onClick={v.topUpAndPlayCrash} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
-                    )}
-                    <div style={{display:"flex",gap:"10px",marginTop:"16px"}}>
-                      <button onClick={v.startCrash} disabled={v.crashRunning} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crashStartLabel}</button>
-                      <button onMouseEnter={v.dodgeCashout} onClick={v.dodgeCashout} style={{background:"#3a2010",border:"2px dashed #ff5a14",color:v.cashoutColor,fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer",transform:`translateX(${v.cashoutDodge}px)`}}>Cash Out</button>
+                    {v.replayCrash ? (
+                      <button onClick={v.topUpAndPlayCrash} style={{marginTop:"10px",background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
+                    ) : null}
+                    <div style={{display:"flex",gap:"10px",marginTop:"16px",flexWrap:"wrap"}}>
+                      <button onClick={v.startCrash} disabled={v.crashRunning || !v.crashCanRun} style={{background: v.crashCanRun ? "linear-gradient(180deg,#ff8a3d,#e0480a)" : "#3a2010",border:"2px solid #ffcf9a",color: v.crashCanRun ? "#2a0e05" : "#8a6a52",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor: v.crashCanRun ? "pointer":"not-allowed"}}>{v.crashCanRun ? v.crashStartLabel : v.crashNeedBBLabel}</button>
+                      <button
+                        onMouseEnter={v.crashDodgeAttempt}
+                        onClick={v.crashCashoutClick}
+                        disabled={v.crashPhase!=="climbing" || v.crashProcessing}
+                        style={{
+                          background: v.crashExhausted ? "linear-gradient(180deg,#8fd97a,#3a9a2a)" : "#3a2010",
+                          border: v.crashExhausted ? "2px solid #cfe4ff" : "2px dashed #ff5a14",
+                          color:v.cashoutColor,fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",
+                          cursor: v.crashPhase==="climbing" ? "pointer" : "default",
+                          transform:`translate(${v.cashoutDodgeX}px, ${v.cashoutDodgeY}px) scale(${v.cashoutScale})`,
+                          transition:"transform 0.12s ease-out",
+                        }}
+                      >{v.crashButtonLabel}</button>
+                      <button onClick={v.expressCashoutClick} disabled style={{background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"12px 14px",borderRadius:"8px",cursor:"pointer"}}>{v.expressCashoutLabel}</button>
                     </div>
                   </div>
                 )}
 
                 {v.isCrates && (
                   <div>
-                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"14px"}}>Loot Crate Defuser</div>
+                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Loot Crate Defuser</div>
+                    <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"12px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes.</div>
+
+                    {v.crateMomKeyClaimableToday && (
+                      <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap"}}>
+                        <span style={{fontSize:"11.5px",color:"#ffd54a"}}>{v.momKeyBoxLabel} dropped from the top of the screen. Days Mom Checked In: {v.crateMomKeyStreak}.</span>
+                        <button onClick={v.claimDailyMomKey} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"11.5px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Claim Daily Mom Key</button>
+                      </div>
+                    )}
+
                     <div style={{display:"flex",gap:"24px",alignItems:"center",flexWrap:"wrap"}}>
                       <div style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim}}>
                         <div style={{position:"absolute",inset:"30% 0",height:"14px",background:"#7a5a2a"}}></div>
                       </div>
                       <div style={{flex:1,minWidth:"220px"}}>
-                        {!v.crateKeyBought && (
-                          <button onClick={v.buyKey} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateBtnLabel}</button>
+                        {!v.crateKeyBought && !v.crateOpening && (
+                          <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+                            {v.crateFreeKeyCount>0 && (
+                              <button onClick={v.useFreeKey} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>Use Free Key ({v.crateFreeKeyCount})</button>
+                            )}
+                            <button onClick={v.crateBtnAction} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateBtnLabel}</button>
+                          </div>
                         )}
-                        {v.crateKeyBought && (
+                        {v.crateKeyBought && !v.crateOpening && (
+                          <button onClick={v.openCrate} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateOpenLabel}</button>
+                        )}
+                        {v.crateOpening && v.crateRevealPhase!=="reel" && v.crateRevealPhase!=="award" && (
                           <>
-                            <button onClick={v.openCrate} disabled={v.crateOpening} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateOpenLabel}</button>
-                            {v.crateOpening && (
-                              <>
-                                <div style={{marginTop:"10px",background:"#0e0a06",borderRadius:"5px",height:"8px",overflow:"hidden"}}>
-                                  <div style={{height:"100%",width:`${v.crateProgress}%`,background:"linear-gradient(90deg,#ff8a3d,#ffd54a)"}}></div>
-                                </div>
-                                <div style={{fontSize:"11px",color:"#a9705a",marginTop:"6px"}}>Playing unskippable dubstep drop... {v.crateProgress}% (no, you cannot skip this)</div>
-                              </>
+                            <div style={{fontSize:"12px",color:"#ffb347",fontWeight:700,marginBottom:"4px"}}>{v.crateCaption}</div>
+                            <div style={{background:"#0e0a06",borderRadius:"5px",height:"8px",overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${v.crateProgress}%`,background:"linear-gradient(90deg,#ff8a3d,#ffd54a)",transition:"width 0.1s linear"}}></div>
+                            </div>
+                            <div style={{fontSize:"9.5px",color:"#8a6a52",marginTop:"6px"}}>{v.trackNameCaption}</div>
+                            {v.crateSkipAvailable && !v.crateSkipUsed && (
+                              <button onClick={v.skipCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>{v.crateSkipLabel}</button>
                             )}
                           </>
                         )}
-                        {v.crateResult && (
+                        {v.crateRevealPhase==="reel" && v.crateReel && (
+                          <div>
+                            <div style={{fontSize:"11px",color: v.crateReel.recalibrated ? "#ff8a3d" : "#a9705a",fontWeight:700,marginBottom:"6px"}}>{v.crateReel.recalibrated ? "RECALIBRATING" : "…"}</div>
+                            <div style={{position:"relative",overflow:"hidden",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",height:"70px",display:"flex",alignItems:"center"}}>
+                              <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:"2px",background:"#ffe9d6",zIndex:5}}></div>
+                              <div style={{display:"flex",gap:"6px",transform:`translateX(calc(50% - ${v.crateReel.landingIndex*66+33}px))`,transition:"transform 2.6s cubic-bezier(0.1,0.7,0.2,1)"}}>
+                                {v.crateReel.strip.map((it,i)=>(
+                                  <div key={i} style={{minWidth:"60px",height:"60px",borderRadius:"5px",border:`2px solid ${it.reelOnly ? "#ff4444" : "#7a5a2a"}`,background:"linear-gradient(160deg,#2a1408,#160a04)",display:"flex",alignItems:"center",justifyContent:"center",padding:"3px",textAlign:"center",fontSize:"7px",color:it.reelOnly?"#ff4444":"#e8c9ac"}}>{it.reelOnly ? "LEGENDARY" : it.tier.split(" ")[0]}</div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                        {v.crateRevealPhase==="award" && v.crateAward && (
+                          <div>
+                            <div style={{fontSize:"10.5px",color:"#a9705a",fontStyle:"italic",marginBottom:"6px"}}>SO CLOSE! You were 1 slot from {v.fruitRollUp.name} (${v.fruitRollUp.value.toFixed(2)}). <span style={{fontSize:"7px"}}>(distance does not affect outcome; this reel is a movie; odds: yes)</span></div>
+                            <div style={{border:`2px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"8px",padding:"12px",background:"linear-gradient(160deg,#241005,#160a04)"}}>
+                              <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:RARITY_COLORS[v.crateAward.tier]||"#ff8a3d",letterSpacing:"1px"}}>{v.crateAward.tier.toUpperCase()}</div>
+                              <div style={{fontSize:"13px",fontWeight:800,color:"#ffe9d6",margin:"6px 0"}}>{v.crateAward.name}</div>
+                              <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ Downloads: 4,000,000</div>
+                              <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
+                            </div>
+                          </div>
+                        )}
+                        {v.crateResult && v.crateRevealPhase!=="reel" && (
                           <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.crateResult}</div>
                         )}
                         {v.replayCrates && (
