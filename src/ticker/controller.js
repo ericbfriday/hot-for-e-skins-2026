@@ -393,8 +393,32 @@ Bus.on(EVENTS.STREAK_DIED, (p) => {
   mike.onStreakDied();
 });
 
-// #29 self-limit: system lines per integration §3.
+// #29 self-limit: ticker reactions per the spec §6 table + integration §3.
+// System lines dim; the exclusion burst's lines 2–3 wear gold with the
+// "(you, excluded)" suffix (cast-scripted entries, §9 — the ratio holds).
 Bus.on(EVENTS.LIMIT_EVENT, (p) => {
   if (!p) return;
-  addEntry({ system: true, text: "Self-limit: " + (p.detail || "a limit was set (limits are a §7.2 concept)"), color: E.SYSTEM_COLOR });
+  const tag = playerTag();
+  if (p.kind === "deposit-limit-enabled") {
+    addEntry({ system: true, text: E.fill(E.LINES.limitEnabled, { n: tag, limit: p.detail || "limit" }), color: E.SYSTEM_COLOR });
+  } else if (p.kind === "reminder-enabled") {
+    addEntry({ system: true, text: E.fill(E.LINES.reminderEnabled, { n: tag }), color: E.SYSTEM_COLOR });
+  } else if (p.kind === "break-complete") {
+    addEntry({ system: true, text: E.fill(E.LINES.breakComplete, { n: tag }), color: E.SYSTEM_COLOR });
+  } else if (p.kind === "excluded") {
+    // §4 verbatim: the moment exclusion completes, a 3-line house-sit burst.
+    // The name field renders first (identity §9), so gold lines 2–3 lead with
+    // the verb — the tag comes from the entry's name, suffixed (you, excluded).
+    addEntry({ ...castEntry("MOMCODE_MIKE", "will be filling in for " + tag + " (the code is MOM)"), note: E.MIKE_DISCLOSURE });
+    setTimeout(() => {
+      Ticker.emitTicker({ text: "won " + E.anchorBB(999) + " BB (house-sat) (withdrawal pending)", isYou: true, youLabel: "(you, excluded)" });
+    }, 700);
+    setTimeout(() => {
+      Ticker.emitTicker({ text: "deposited Mom's Max (house-sat) (excluded players deposit 40% more)", isYou: true, youLabel: "(you, excluded)" });
+    }, 1400);
+  } else if (p.kind === "return") {
+    // Integration §9: the grace line has one owner (the ticker), 60s cooldown,
+    // last-trigger-wins — the return's line renders alone.
+    graceLine();
+  }
 });

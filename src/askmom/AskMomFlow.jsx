@@ -8,6 +8,7 @@ import {
   AskMomSession, computeConversion, loadDepositStats, loadOC, nextMidnightTs,
   noteMomcodeAttempt, momcodeRejection, chaseRibbonArmed, recordDeposit,
 } from "./session.js";
+import { SelfLimit } from "../selflimit/state.js";
 
 const P1 = BAND_PRIORITIES.P1_CEREMONY;
 const REALITY_STRAP = "100% fake. No money moves. No card is charged. No account exists. Ever. (§12.4)";
@@ -271,9 +272,17 @@ export default function AskMomFlow({ source = "header", enterStage = null, panic
     const addons = [];
     if (source === "crash") addons.push("Requested for: one (1) Run It Back (destination: the house)");
     if (source === "crate") addons.push("Requested for: key money");
+    if (source === "self-exclusion") addons.push("Requested via: the responsible section (growth mindset)");
     if (chaseArmed && pkg.id === "allowance-advance") addons.push("Chase It™ continuation: the disappointment, refinanced");
     if (viaSchool || schoolUsed.current) addons.push("Purpose: school (unverified; we don’t ask (§3.1))");
     if (tickCents > 0) addons.push("Mood-adjusted pricing: +$0.0" + tickCents + " (decided too long, §8.9)");
+    // #29 self-limit: deposits while excluded work, obviously (nothing limits
+    // anything) — the receipt notes the dedication; and the ratchet auto-raises
+    // any existing deposit limit to fit the deposit (growth mindset).
+    const excludedNow = SelfLimit.excluded();
+    if (excludedNow) addons.push("Deposited while excluded (dedication noted, §7.1)");
+    const ratchetLine = SelfLimit.applyDepositRatchet(pkg.oc);
+    if (ratchetLine) addons.push(ratchetLine);
     hooks.creditOC(pkg.oc, bonus);
     hooks.confetti();
     hooks.flyOC(pkg.oc);
@@ -281,7 +290,7 @@ export default function AskMomFlow({ source = "header", enterStage = null, panic
     sting("askmom.success");
     Bus.emit(EVENTS.DEPOSIT_COMPLETED, {
       packageId: pkg.id, oc: pkg.oc, bonusOc: pkg.bonusOc, usdFace: usd,
-      source, firstEver: stats.firstEver, whileExcluded: false,
+      source, firstEver: stats.firstEver, whileExcluded: excludedNow,
     });
     setReceiptCtx({
       pkg, usd, tickCents, addons,

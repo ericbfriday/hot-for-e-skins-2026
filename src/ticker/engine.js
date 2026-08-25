@@ -122,7 +122,23 @@ export const LINES = {
   mikeFirstDeposit: "[OWNER] MOMCODE_MIKE just 47x'd Mom's Visa — you're next (code MOM)",
   momsMaxPurchased: "{n} purchased Mom's Max. This is the last time (§10.3).",
   mikeRespect: "[OWNER] MOMCODE_MIKE: {n} went Max. Respect. (code MOM)",
+  // #29 self-limit (§6 table)
+  limitEnabled: "{n} enabled a {limit} (growth mindset)",
+  reminderEnabled: "{n} would like to be reminded (Article 7 will handle it)",
+  breakComplete: "{n} completed a 24-hour break (house time)",
 };
+
+// ---- §4 house-sit fill-ins (self-limit; exclusion ongoing) --------------------
+// Cast-scripted entries wearing gold: real in-fiction events under your tag,
+// never losses, non-transferable (they're his). At least one per 10 ambient
+// minutes — they ride Mike's calendar (standing slot / heaters).
+export const HOUSE_SIT_LINES = [
+  "{n} won {bb} BB (house-sat) (withdrawal pending)",
+  "{n} unboxed the Karambit (house-sat) (it's his)",
+  "{n} won the {item} (house-sat) (non-transferable)",
+  "{n} 10x'd the College Fund (house-sat) (as scheduled)",
+  "{n} turned 8 BB into a down payment (house-sat) (screenshot pending)",
+];
 
 // ---- field pools -------------------------------------------------------------
 export const GAMES = ["roulette", "coinflip", "crash", "crates"];

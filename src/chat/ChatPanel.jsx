@@ -374,6 +374,45 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
       addTimer(() => pushEntry({ user: "PROVABLY_MOM", color: "#e8c9ac", msg: "I can see the homework from here. Deposit responsibly." }), 2100);
     }));
 
+    // #29 self-limit: chat reactions per the spec §6 table + §5 milestone leaks
+    // (once per identity via hfes_chat_flags). The room's stance on self-care
+    // is derisive pity; MOM's lines are whispers only (canon).
+    offs.push(Bus.on(EVENTS.LIMIT_EVENT, (p) => {
+      if (!p) return;
+      const tag = playerTag();
+      const k = p.kind;
+      const personaLine = (key, msg, delay) => addTimer(() => pushEntry({ user: personaRef.current.nameFor(key), color: key === "hype" ? "#ffd54a" : (key === "shill" ? "#8fd97a" : "#8a7a9a"), msg }), delay);
+      if (k === "deposit-limit-enabled" || k === "loss-limit-enabled" || k === "reminder-enabled" || k === "reality-enabled") {
+        addTimer(() => pushCast("MOD_Chad_Official", "reminder: deposit responsibly!! (deposit more)"), 1500);
+        if (markFlag("limit:firstAny")) addTimer(() => pushCast("MOD_Chad_Official", tag + " set a limit. growth mindset (limits go up)"), 1000);
+        if (k === "loss-limit-enabled" && markFlag("limit:firstLossLimit")) personaLine("shill", "loss limit? i don't have losses (skill issue)", 2400);
+        if (k === "reality-enabled" && markFlag("limit:firstReality")) personaLine("doomer", "he wants reality now. the schedule delivers", 2400);
+      } else if (k === "deposit-limit-raised") {
+        addTimer(() => pushWhisper("A higher limit. I always believed in you. ❤"), 900);
+      } else if (k === "ladder-retreat") {
+        addTimer(() => pushWhisper("You chose us. I knew it. ❤"), 700);
+      } else if (k === "break-start") {
+        addTimer(() => pushAmbientLine("where'd " + tag + " go"), 800);
+        if (markFlag("limit:firstBreak")) personaLine("hype", "he's on a break lol", 1600);
+      } else if (k === "break-complete") {
+        // chat owns the punchline: the break is shorter than the room's memory of it
+        addTimer(() => pushAmbientLine("nevermind"), 600);
+      } else if (k === "excluded") {
+        addTimer(() => pushCast("MOD_Chad_Official", "🔔 " + tag + " has been excluded. the streak lives (house-sat)."), 400);
+        addTimer(() => personaLine("doomer", "the schedule is real. accept it."), 1200);
+        addTimer(() => pushAmbientLine("F"), 1900);
+      } else if (k === "return") {
+        personaLine("hype", tag + "'s back. the fill-in was better honestly", 800);
+      }
+    }));
+
+    // #29: the fill-in's wins surface as shill chatter (low rate — the room
+    // assumes you're on a heater, because someone is).
+    offs.push(Bus.on(EVENTS.MIKE_WIN, (p) => {
+      if (!p || p.class !== "house-sat") return;
+      if (Math.random() < 0.4) addTimer(() => pushAmbientLine(playerTag() + "'s on a heater (someone is)"), 500);
+    }));
+
     scheduleAmbient();
     const tickInt = setInterval(() => setTick((n) => n + 1), 5000);
 
