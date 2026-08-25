@@ -543,7 +543,7 @@ class App extends React.Component {
     }
     const nb = this.state.balanceBB - amount;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
-    Bus.emit(EVENTS.BB_SPENT, {amount, reason});
+    Bus.emit(EVENTS.BB_SPENT, {amount, reason, balanceBB: nb});
     Regime.evaluate(nb);
     return true;
   }
@@ -1188,7 +1188,7 @@ class App extends React.Component {
     if (!(amount > 0)) return;
     const nb = this.state.balanceBB + amount;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
-    Bus.emit(EVENTS.BB_CREDITED, {amount, reason});
+    Bus.emit(EVENTS.BB_CREDITED, {amount, reason, balanceBB: nb});
     Regime.evaluate(nb);
   }
   cooldownStart(){
