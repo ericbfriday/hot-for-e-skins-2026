@@ -39,6 +39,15 @@ import {
   TRADE_HOLD_LABEL, INSTANT_SELL_SUBLIE, DIGITAL_ASSET_VALUE, DIGITAL_ASSET_SECTION,
   DIGITAL_ASSET_SELL_TOOLTIP, RECEIPT_FLAVOR, MARKET_OC_NOTICE, ESTIMATE_FOOTER, PORTFOLIO_HOVER,
 } from "./games/marketplace.js";
+import {
+  PANIC_DISGUISE_KEY, PANIC_PRESSES_KEY, PANIC_HINT_KEY, PANIC_FORFEIT_KEY,
+  HUSH_GRATUITY_BB, ESC_TOOLTIP, CRATE_ESC_ANSWER, ESSAY_EXPORT_LINE, RUNG2_MARGIN_COMMENT,
+  SUSPICION_TOAST, MOOD_FOOTNOTE, MOOD_CROSSED_LINE, HUSH_LINE, HUSH_WAIVED_LINE,
+  RG_TAGLINE, PROVABLY_MOM_CHAT,
+  generateDisguise, essayParagraphs, growthParagraphs, staticWordCount, startingWordCount,
+  wordCountAt, rungFor, restoreLabelFor, docTitleFor, FAVICON_DOC, forfeitLineFor,
+  gradeLabel, teacherDisplay,
+} from "./panic/homework.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -189,6 +198,8 @@ class App extends React.Component {
     identityOpen:false, customInput:"", customMsg:null,
     ident:null, stats:null,
     panicActive:false,
+    panicEssay:null, panicWordCount:0, panicHint:null, panicFileMenu:false,
+    panicWelcome:null, panicMoodShown:false,
     activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
     moodWord:null, denomsOpen:false,
     balanceOC:0, bonusOC:null, askmom:null, toasts:[], ocFly:null, cooldown:null, streakChip:null, abandonedCount:0,
@@ -382,6 +393,62 @@ class App extends React.Component {
         this.toast(TOS_EDIT_NOTICE, {dismissLabel:"Acknowledged (both versions)."});
       }
     }, 1000);
+
+    // ---- MOM'S HOME (#28): the panic surface ---------------------------------
+    // Tab-close forfeit ruling (panic §5): in-flight timers died with the tab,
+    // and the house wins by default. The bus was dead when it happened, so the
+    // ruling (and its round.forfeit event) lands now, on session start.
+    try {
+      const pendingForfeit = JSON.parse(localStorage.getItem(PANIC_FORFEIT_KEY) || "null");
+      if (pendingForfeit && pendingForfeit.surface) {
+        localStorage.removeItem(PANIC_FORFEIT_KEY);
+        this._panicForfeitLine = forfeitLineFor(pendingForfeit.surface);
+        this.toast(this._panicForfeitLine);
+        Bus.emit(EVENTS.ROUND_FORFEIT, {surface: pendingForfeit.surface, reason: pendingForfeit.reason === "panic" ? "panic" : "tab-close"});
+      }
+    } catch (e) {}
+    // Persisted disguise flag: panic, slam the laptop shut, reopen later — the
+    // site opens as homework until "Close (she's gone)" (panic §5). Consumers
+    // re-enter hidden mode via the canonical panic.hidden emit.
+    try {
+      const disguise = JSON.parse(localStorage.getItem(PANIC_DISGUISE_KEY) || "null");
+      if (disguise && disguise.active && Number.isFinite(disguise.hiddenAt)) {
+        this._panicHiddenAt = disguise.hiddenAt;
+        this._panicMoodAtHide = disguise.moodAtHide || Mood.word();
+        this._panicRung = rungFor(disguise.presses || 1);
+        this._panicStartWords = Number.isFinite(disguise.startWords) ? disguise.startWords : 400;
+        this._panicLastSubject = disguise.subject;
+        this._panicSettledWhileHidden = [];
+        this._panicSwapDocMeta(disguise.subject, disguise.draftNo || 3);
+        this.setState({
+          panicActive:true, panicEssay:disguise,
+          panicWordCount: wordCountAt(this._panicStartWords, disguise.hiddenAt),
+        });
+        this._panicStartWordTick();
+        Bus.emit(EVENTS.PANIC_HIDDEN, {pressesToday: disguise.presses || 1});
+      }
+    } catch (e) {}
+    this._escTimes = [];
+    this._escKey = (e)=>this._onEscKey(e);
+    window.addEventListener("keydown", this._escKey);
+    // §5: a round in flight at tab close is ruled a forfeit next session.
+    this._onPageHide = () => {
+      const surface = this._panicInFlightSurface();
+      if (!surface) return;
+      try {
+        localStorage.setItem(PANIC_FORFEIT_KEY, JSON.stringify({surface, reason: this.state.panicActive ? "panic" : "tab-close", at: Date.now()}));
+      } catch (err) {}
+    };
+    window.addEventListener("pagehide", this._onPageHide);
+    // Receipt material: in-flight crash runs that settle while hidden — "kept
+    // running. It crashed at {x}x while you were studying."
+    this._offPanicSettled = Bus.on(EVENTS.ROUND_SETTLED, (p)=>{
+      if (!this.state.panicActive || !p || p.surface !== "crash" || p.kind !== "crash-run") return;
+      this._panicSettledWhileHidden.push({
+        mult: this._crashScript ? this._crashScript.crashHeadline : null,
+        evades: this.state.crashDodges || 0,
+      });
+    });
   }
 
   saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
@@ -396,6 +463,11 @@ class App extends React.Component {
     clearTimeout(this._crateRevealTimer1); clearTimeout(this._crateRevealTimer2);
     clearInterval(this._marketInt); clearTimeout(this._flickerT);
     clearTimeout(this._appealT); clearTimeout(this._contractT);
+    clearInterval(this._panicWordInt); clearTimeout(this._panicHintT);
+    if (this._escKey) window.removeEventListener("keydown", this._escKey);
+    if (this._onPageHide) window.removeEventListener("pagehide", this._onPageHide);
+    if (this._offPanicSettled) this._offPanicSettled();
+    this._panicSwapDocMeta(null, 0); // restore the site chrome if unmounted mid-disguise
     if (this._onVisibility) document.removeEventListener("visibilitychange", this._onVisibility);
     if (this._offMood) this._offMood();
     if (this._offIdent) this._offIdent();
@@ -536,19 +608,144 @@ class App extends React.Component {
     this.setState({customInput:"", customMsg:"Compliance Filter (mood: "+res.moodWord+") applied. Non-refundable."});
   }
 
-  togglePanic(){
-    const wasActive = this.state.panicActive;
-    this.setState(s=>({panicActive:!s.panicActive}));
-    if (!wasActive) {
-      this._panicPresses = (this._panicPresses || 0) + 1;
-      this._panicHiddenAt = Date.now();
-      Bus.emit(EVENTS.PANIC_HIDDEN, {pressesToday: this._panicPresses});
-    } else {
-      const hiddenMs = this._panicHiddenAt ? Date.now() - this._panicHiddenAt : 0;
-      Bus.emit(EVENTS.PANIC_REVEALED, {hiddenMs, missed: Ticker.snapshot().hiddenCount});
-      this.toast(RESTORE_TOAST); // verbatim (audio-gags §8); the Band already auto-restored
-    }
+  // ---- MOM'S HOME (#28): trigger, disguise, suspicion ladder, Hush, welcome-back
+  _panicPressesToday(){
+    try {
+      const p = JSON.parse(localStorage.getItem(PANIC_PRESSES_KEY) || "null");
+      if (p && p.day === localDayKey() && Number.isFinite(p.count)) return p.count;
+    } catch (e) {}
+    return 0; // rungs reset at the daily boundary (same seed family as the mood)
   }
+  _panicBumpPresses(){
+    const count = this._panicPressesToday() + 1;
+    try { localStorage.setItem(PANIC_PRESSES_KEY, JSON.stringify({day: localDayKey(), count})); } catch (e) {}
+    return count;
+  }
+  _panicSwapDocMeta(subject, draftNo){
+    try {
+      const link = document.querySelector("link[rel='icon']") || document.querySelector("link[rel*='icon']");
+      if (subject) {
+        if (!this._panicOrigTitle) this._panicOrigTitle = document.title;
+        if (link) {
+          if (!this._panicOrigIcon) this._panicOrigIcon = link.getAttribute("href");
+          link.setAttribute("href", FAVICON_DOC);
+        }
+        document.title = docTitleFor(subject, draftNo);
+      } else if (this._panicOrigTitle) {
+        document.title = this._panicOrigTitle;
+        if (link && this._panicOrigIcon) link.setAttribute("href", this._panicOrigIcon);
+        this._panicOrigTitle = null; this._panicOrigIcon = null;
+      }
+    } catch (e) {}
+  }
+  _panicStartWordTick(){
+    clearInterval(this._panicWordInt);
+    this._panicWordInt = setInterval(()=>{
+      if (!this.state.panicActive) { clearInterval(this._panicWordInt); return; }
+      this.setState({panicWordCount: wordCountAt(this._panicStartWords, this._panicHiddenAt)});
+    }, 1000);
+  }
+  togglePanic(){
+    if (this.state.panicActive) this._panicReveal();
+    else this._panicActivate();
+  }
+  _panicActivate(){
+    const presses = this._panicBumpPresses();
+    const rung = rungFor(presses);
+    const disguise = generateDisguise(this._panicLastSubject || null); // never the same subject twice in a row
+    this._panicLastSubject = disguise.subject;
+    this._panicHiddenAt = Date.now();
+    this._panicMoodAtHide = Mood.word(); // the mood cannot change intraday — remember it anyway
+    this._panicStartWords = startingWordCount(); // mid-draft: 400–700 words
+    this._panicRung = rung;
+    this._panicSettledWhileHidden = [];
+    const draftNo = Math.min(2 + presses, 12); // draft 3 on the first essay of the day
+    const record = {
+      active:true, hiddenAt:this._panicHiddenAt, startWords:this._panicStartWords,
+      subject:disguise.subject, title:disguise.title, teacher:disguise.teacher, seed:disguise.seed,
+      moodAtHide:this._panicMoodAtHide, presses, draftNo,
+    };
+    try { localStorage.setItem(PANIC_DISGUISE_KEY, JSON.stringify(record)); } catch (e) {} // survives tab close
+    this._panicSwapDocMeta(disguise.subject, draftNo);
+    this.setState({panicActive:true, panicEssay:record, panicWordCount:this._panicStartWords, panicWelcome:null, panicFileMenu:false});
+    this._panicStartWordTick();
+    Bus.emit(EVENTS.PANIC_HIDDEN, {pressesToday:presses}); // P0: the Band severs the audio graph
+  }
+  _panicReveal(){
+    const hiddenMs = this._panicHiddenAt ? Date.now() - this._panicHiddenAt : 0;
+    // Hush Gratuity: 1 BB per restore, floored at 0 BB — nothing to take means
+    // waived (§1.3). reason:"panic-hush" so the Band's canonical muffled
+    // coin-swallow (scheduled by the Band 900ms after reveal) doesn't fire twice.
+    let hushLine = HUSH_WAIVED_LINE;
+    if (this.state.balanceBB >= HUSH_GRATUITY_BB) {
+      const nb = this.state.balanceBB - HUSH_GRATUITY_BB;
+      this.setState({balanceBB:nb}); this.saveBalance(nb);
+      Bus.emit(EVENTS.BB_SPENT, {amount:HUSH_GRATUITY_BB, reason:"panic-hush", balanceBB:nb});
+      hushLine = HUSH_LINE;
+    }
+    const missed = Ticker.snapshot().hiddenCount;
+    Bus.emit(EVENTS.PANIC_REVEALED, {hiddenMs, missed}); // Band auto-restores; ticker flushes the backlog
+    const missedLine = Ticker.missedSummary(hiddenMs);
+    this._panicSwapDocMeta(null, 0);
+    clearInterval(this._panicWordInt);
+    try { localStorage.removeItem(PANIC_DISGUISE_KEY); } catch (e) {}
+    const roundLines = this._panicSettledWhileHidden.map((r)=>
+      "Your College Fund Crash kept running. It crashed at "+(r.mult ? r.mult.toFixed(2) : "1.01")+"x while you were studying. Cash-out was evaded "+r.evades+" times (you weren't here to try)."
+    );
+    if (this._panicForfeitLine) roundLines.push(this._panicForfeitLine); // §5: the Quickscope clause
+    this.setState({
+      panicActive:false, panicEssay:null, panicFileMenu:false, panicMoodShown:false,
+      panicWelcome:{
+        tag:this.playerTagOrYou(), moodAtHide:this._panicMoodAtHide, moodNow:Mood.word(),
+        hushLine, roundLines, missedLine,
+      },
+    });
+    this.toast(RESTORE_TOAST); // verbatim (audio-gags §8); the Band already auto-restored
+    if (this._panicRung >= 3) {
+      // Rung 3: the suspicion toast, and Mom is watching the homework.
+      this.toast(SUSPICION_TOAST, {dismissLabel:"Acknowledged (§12.0)"});
+      this.pushChat(PROVABLY_MOM_CHAT);
+    }
+    this._panicForfeitLine = null;
+  }
+  _panicInFlightSurface(){
+    const s = this.state;
+    if (s.crashPhase === "scheduling" || s.crashPhase === "climbing" || s.crashProcessing) return "crash";
+    if (s.rouletteSpinning) return "roulette";
+    if (s.coinFlipping) return "coinflip";
+    if (s.crateOpening || s.crateKeyBought) return "crates";
+    return null;
+  }
+  _panicShowHint(text){
+    this.setState({panicHint:text});
+    clearTimeout(this._panicHintT);
+    this._panicHintT = setTimeout(()=>this.setState({panicHint:null}), 2600);
+  }
+  _onEscKey(e){
+    if (!e || e.key !== "Escape") return;
+    const now = Date.now();
+    this._escTimes = (this._escTimes || []).filter((t)=>now - t < 1500);
+    this._escTimes.push(now);
+    if (this._escTimes.length >= 3) {
+      this._escTimes = [];
+      this.togglePanic(); // §12.0 Emergency Maternal Protocol — masks, and reveals, hands-free
+      return;
+    }
+    if (this.state.panicActive) return; // single-tap while hidden: silence
+    if (this.state.crateOpening) {
+      this._panicShowHint(CRATE_ESC_ANSWER); // you can't skip the crate; Mom skips everything
+      return;
+    }
+    try {
+      if (!localStorage.getItem(PANIC_HINT_KEY)) {
+        localStorage.setItem(PANIC_HINT_KEY, "1"); // first use only, thereafter silence
+        this._panicShowHint(ESC_TOOLTIP);
+      }
+    } catch (err) {}
+  }
+  panicDismissWelcome(){ this.setState({panicWelcome:null, panicMoodShown:false}); }
+  panicToggleMood(){ this.setState(s=>({panicMoodShown:!s.panicMoodShown})); }
+  panicToggleFileMenu(){ this.setState(s=>({panicFileMenu:!s.panicFileMenu})); }
 
   toggleBandMuted(){
     HouseBand.setMuted(!HouseBand.isMuted());
@@ -1405,6 +1602,21 @@ class App extends React.Component {
       customMsg:s.customMsg, buyCustom:()=>this.buyCustom(), customPrice:CUSTOM_NAME_PRICE_OC,
       customAffordable: s.balanceOC >= CUSTOM_NAME_PRICE_OC,
       panicActive:s.panicActive, togglePanic:()=>this.togglePanic(),
+      panicEssay:s.panicEssay, panicWordCount:s.panicWordCount, panicHint:s.panicHint,
+      panicFileMenu:s.panicFileMenu, panicFileMenuToggle:()=>this.panicToggleFileMenu(),
+      panicFileMenuClose:()=>this.setState({panicFileMenu:false}),
+      panicWelcome:s.panicWelcome, panicMoodShown:s.panicMoodShown,
+      panicToggleMood:()=>this.panicToggleMood(), panicDismissWelcome:()=>this.panicDismissWelcome(),
+      panicRung: this._panicRung || 1,
+      panicRestoreLabel: restoreLabelFor(this._panicRung || 1),
+      panicParagraphs: s.panicEssay ? essayParagraphs(s.panicEssay.subject) : [],
+      panicGrowthParas: s.panicEssay
+        ? growthParagraphs(s.panicEssay.seed || "0", Math.min(6000, Math.max(0, s.panicWordCount - staticWordCount(s.panicEssay.subject))))
+        : [], // rendered tail caps at 6k words; the chip keeps its true count
+      panicGrade: s.panicEssay ? gradeLabel(s.panicEssay.teacher) : "",
+      panicTeacher: s.panicEssay ? teacherDisplay(s.panicEssay.teacher) : "",
+      panicShowMargin: (this._panicRung || 1) >= 2,
+      panicRgTagline: RG_TAGLINE, panicExportLine: ESSAY_EXPORT_LINE, panicMarginComment: RUNG2_MARGIN_COMMENT,
       bandMuted:s.bandMuted, toggleBandMuted:()=>this.toggleBandMuted(),
       muteTitle: MUTE_TOOLTIP + "\n\n" + MUTE_FINE_PRINT,
       mainBlurFilter: s.panicActive ? "blur(4px)" : "none",
@@ -2587,7 +2799,101 @@ class App extends React.Component {
           );
         })()}
 
-        <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:v.momsGlow?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
+        {/* ---- MOM'S HOME (#28): the Homework disguise (§2) — the underlying site
+            gets fully replaced, not blurred; z 600 covers every overlay incl. the
+            marketplace's checkout (190) and Mom's verification modal (250) ---- */}
+        {v.panicActive && v.panicEssay && (
+          <div style={{position:"fixed",inset:0,zIndex:600,background:"#f8f9fa",fontFamily:"Arial,Helvetica,sans-serif",color:"#202124",overflowY:"auto",overflowX:"hidden"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 18px",position:"relative"}}>
+              <div style={{width:"34px",height:"42px",background:"#fff",border:"1px solid #dadce0",borderRadius:"2px 10px 2px 2px",position:"relative",flexShrink:0}}>
+                <div style={{position:"absolute",top:0,right:0,width:"10px",height:"10px",background:"#e8eaed",borderRadius:"0 9px 0 4px"}}></div>
+                <div style={{position:"absolute",left:"6px",right:'8px',top:'12px',height:'2px',background:'#4285f4'}}></div>
+                <div style={{position:"absolute",left:'6px',right:'12px',top:'18px',height:'2px',background:'#4285f4'}}></div>
+                <div style={{position:"absolute",left:'6px',right:'10px',top:'24px',height:'2px',background:'#4285f4'}}></div>
+              </div>
+              <div style={{minWidth:0}}>
+                <div style={{fontSize:"17px",color:"#202124",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"46vw"}}>{v.panicEssay.title}</div>
+                <div style={{fontSize:"13.5px",color:"#5f6368",display:"flex",gap:"14px",whiteSpace:"nowrap"}}>
+                  <span onClick={v.panicFileMenuToggle} style={{cursor:"pointer"}}>File</span>
+                  <span>Edit</span><span>View</span><span>Insert</span><span>Format</span><span>Tools</span><span>Extensions</span><span>Help</span>
+                </div>
+              </div>
+              {v.panicFileMenu && (
+                <div style={{position:"absolute",top:"58px",left:"56px",background:"#fff",border:"1px solid #dadce0",borderRadius:"8px",boxShadow:"0 4px 12px rgba(60,64,67,.3)",padding:"12px 16px",fontSize:"12px",color:"#5f6368",maxWidth:"320px",zIndex:5,lineHeight:1.6}}>
+                  <div style={{color:"#80868b",fontSize:"10.5px",marginBottom:"4px",letterSpacing:"0.5px"}}>DOWNLOAD · SAVE TO DRIVE · MAKE A COPY · PRINT</div>
+                  {v.panicExportLine}
+                  <div style={{marginTop:"6px"}}><button onClick={v.panicFileMenuClose} style={{background:"none",border:"none",color:"#1a73e8",cursor:"pointer",fontSize:"11px",padding:0}}>ok</button></div>
+                </div>
+              )}
+              <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"14px",flexShrink:0}}>
+                <span style={{fontSize:"13.5px",color:"#5f6368"}}>🔒 History off the record</span>
+                <span style={{border:"1px solid #dadce0",borderRadius:"4px",padding:"5px 16px",fontSize:"13.5px",color:"#1a73e8",fontWeight:700,cursor:"pointer",background:"#fff"}}>Share</span>
+                <span style={{width:"30px",height:"30px",borderRadius:"50%",background:"#7986cb",color:"#fff",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"13px",fontWeight:700}}>E</span>
+              </div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:"14px",padding:"4px 18px 10px",fontSize:"12.5px",color:"#444746",borderBottom:"1px solid #dadce0",background:"#f8f9fa",position:"sticky",top:0,zIndex:4}}>
+              <span>Times New Roman</span><span>12</span>
+              <span style={{fontWeight:700}}>B</span><span style={{fontStyle:"italic"}}>I</span><span style={{textDecoration:"underline"}}>U</span>
+              <span style={{marginLeft:"auto",fontSize:"12px",color:"#188038",fontWeight:700,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{v.panicGrade}</span>
+            </div>
+            <div style={{position:"relative",maxWidth:"720px",margin:"22px auto 90px",background:"#fffdf6",boxShadow:"0 1px 3px rgba(60,64,67,.2)",padding:"64px 76px",fontFamily:"Georgia,'Times New Roman',serif",minHeight:"70vh"}}>
+              <div style={{textAlign:"center",fontSize:"22px",fontWeight:700,marginBottom:"6px"}}>{v.panicEssay.title}</div>
+              <div style={{textAlign:"center",fontSize:"12.5px",color:"#5f6368",marginBottom:"30px"}}>{v.panicEssay.subject} · {v.panicTeacher} · {new Date().toLocaleDateString("en-US")}</div>
+              {v.panicParagraphs.map((p,i)=>(
+                <p key={i} style={{fontSize:"14.5px",lineHeight:1.9,textIndent:"34px",margin:"0 0 12px"}}>{p}</p>
+              ))}
+              {v.panicGrowthParas.map((p,i)=>(
+                <p key={"g"+i} style={{fontSize:"14.5px",lineHeight:1.9,textIndent:"34px",margin:"0 0 12px"}}>{p}</p>
+              ))}
+              {v.panicShowMargin && (
+                <div style={{position:"absolute",top:"110px",right:"-168px",width:"150px",background:"#fff",border:"1px solid #dadce0",borderRadius:"8px",padding:"10px",boxShadow:"0 1px 3px rgba(60,64,67,.2)",fontFamily:"Arial,Helvetica,sans-serif"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"6px"}}>
+                    <span style={{width:"20px",height:"20px",borderRadius:"50%",background:"#d93025",color:"#fff",fontSize:"10px",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>{v.panicTeacher.charAt(0)}</span>
+                    <b style={{fontSize:"11px",color:"#202124"}}>{v.panicTeacher}</b>
+                  </div>
+                  <div style={{fontSize:"11px",color:"#d93025",lineHeight:1.5}}>{v.panicMarginComment}</div>
+                </div>
+              )}
+            </div>
+            <div style={{position:"fixed",left:"18px",bottom:"18px",background:"#fff",border:"1px solid #dadce0",borderRadius:"16px",padding:"6px 14px",fontSize:"12px",color:"#5f6368",boxShadow:"0 1px 3px rgba(60,64,67,.2)"}}>{v.panicWordCount.toLocaleString("en-US")} words</div>
+            <button onClick={v.togglePanic} style={{position:"fixed",right:"20px",bottom:"20px",background:"#1a73e8",border:"1px solid #1a73e8",color:"#fff",fontFamily:"Arial,Helvetica,sans-serif",fontSize:"13px",fontWeight:700,padding:"10px 20px",borderRadius:"6px",cursor:"pointer",boxShadow:"0 1px 3px rgba(60,64,67,.3)"}}>{v.panicRestoreLabel}</button>
+          </div>
+        )}
+
+        {/* single-tap ESC tooltip / the crate's answer (§1) — first use only */}
+        {v.panicHint && !v.panicActive && (
+          <div style={{position:"fixed",bottom:"88px",right:"20px",zIndex:170,background:"#241005",border:"1px solid #ff8a3d",borderRadius:"8px",padding:"9px 14px",fontSize:"12px",color:"#ffcf9a",boxShadow:"0 6px 20px rgba(0,0,0,0.6)",maxWidth:"280px"}}>{v.panicHint}</div>
+        )}
+
+        {/* the welcome-back modal (§6): fires on every reveal, button or reload */}
+        {v.panicWelcome && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:650,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+            <div style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ff5a14",borderRadius:"10px",maxWidth:"480px",width:"100%",padding:"26px",boxShadow:"0 0 60px rgba(255,80,20,0.4)",maxHeight:"88vh",overflowY:"auto"}}>
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"25px",color:"#ffb347",letterSpacing:"1px",textShadow:"2px 2px 0 #7a1c00",overflowWrap:"anywhere"}}>Welcome back, {v.panicWelcome.tag}.</div>
+              <p style={{color:"#ffd9b3",fontSize:"13px",margin:"12px 0 8px"}}>While you were studying, the server admin's mood changed.</p>
+              {!v.panicMoodShown ? (
+                <button onClick={v.panicToggleMood} style={{background:"none",border:"none",color:"#ffb347",fontSize:"11.5px",cursor:"pointer",textDecoration:"underline",padding:0}}>show today's mood word</button>
+              ) : (
+                <div style={{background:"#1c0d06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"10px 12px",fontSize:"12px",color:"#e8c9ac",lineHeight:1.6}}>
+                  <div>Today's mood: <b style={{color:"#ffd54a"}}>{v.panicWelcome.moodNow}</b></div>
+                  <div style={{fontSize:"9.5px",color:"#8a6a52",fontStyle:"italic",marginTop:"4px"}}>
+                    {v.panicWelcome.moodNow === v.panicWelcome.moodAtHide ? "Mood drifts at the daily boundary (§8.9). Claims of intraday drift are a load-bearing feature of our marketing." : "For once, we weren't lying."}
+                  </div>
+                </div>
+              )}
+              <div style={{background:"#0e0a06",border:"1px solid #3a1a0a",borderRadius:"6px",padding:"10px 12px",margin:"14px 0",fontSize:"11px",color:"#e8c9ac",lineHeight:1.9}}>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:"#cf6a32",letterSpacing:"1px",marginBottom:"4px"}}>PANIC RECEIPT</div>
+                <div>{v.panicWelcome.hushLine}</div>
+                {v.panicWelcome.roundLines.map((l,i)=>(<div key={i}>{l}</div>))}
+                <div>{v.panicWelcome.missedLine}</div>
+              </div>
+              <button onClick={v.panicDismissWelcome} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>Resume losing</button>
+              <div style={{fontSize:"6.5px",color:"#5a4232",marginTop:"10px",lineHeight:1.6}}>{v.panicRgTagline} (§7.3)</div>
+            </div>
+          </div>
+        )}
+
+        <button onClick={v.togglePanic} title={v.panicRgTagline + " — triple-tap ESC (ToS §12.0)"} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:v.momsGlow?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
 
       </div>
     );
