@@ -27,7 +27,7 @@ import {
   scriptRun, computeExhaustionPayout, CRASH_REBATE_BB, CRASH_TICKER_TEMPLATES,
 } from "./games/crash.js";
 import {
-  defuseDurationMs, buildDefuseStages, TRACK_NAME_CAPTION,
+  defuseDurationMs, buildDefuseStages, TRACK_NAME_CAPTION, CRATE_CAP_SECONDS,
   FRUIT_ROLL_UP, pickAward, confettiEligible, buildReelStrip, kindForTier,
   incrementPity, localDayKey, dayKeyBefore, CRATE_TICKER_TEMPLATES, CRATE_CHAT,
   SKIP_PRICE_BB, SKIP_STALL_EXTENSION_MS, SKIP_JUMP_PCT, SKIP_APPEARS_AT_PCT,
@@ -53,6 +53,7 @@ import {
   wordCountAt, rungFor, restoreLabelFor, docTitleFor, FAVICON_DOC, forfeitLineFor,
   gradeLabel, teacherDisplay,
 } from "./panic/homework.js";
+import { Retention, COPY as RETENTION_COPY } from "./retention/state.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -246,6 +247,9 @@ class App extends React.Component {
     selflimitOpen:false, slLadder:0, slRefuseTip:false, slAskMomPending:null,
     breakActive:null, welcomeBack:null, realityCheckModal:null, momsDeferPulse:false, slTick:0,
 
+    // Retention mechanics (#31) — Attendance Streak™, VIP Ladder, Comeback Key™
+    retention:null, comebackEnvelope:false, crateNextKeyKind:null, vaultSnap:null,
+
     bandMuted: HouseBand.isMuted(),
   };
 
@@ -357,7 +361,7 @@ class App extends React.Component {
         this.pushTicker("A key arrived from Mom (no return address)");
       }
     });
-    this._offInventory = Inventory.subscribe(()=>this.setState({crateHeldCount: Inventory.list().length}));
+    this._offInventory = Inventory.subscribe(()=>{ this.setState({crateHeldCount: Inventory.list().length}); this.maybeApplyMemorialDebt(); });
     this.setState({crateHeldCount: Inventory.list().length});
     this._lastInput = Date.now();
     this._lastIdleNag = 0;
@@ -377,6 +381,20 @@ class App extends React.Component {
       // 4pt LDW disclosure rides it (audio-gags §8).
       const d = HouseBand.takeLDWDisclosure();
       if (d) this.toast(d, {dismissLabel:"Acknowledged (4pt)"});
+    });
+    // #31 retention: Attendance Streak™ / Comeback Key™ session checks ride
+    // session.started (integration §3); the evening ladder, the velvet window
+    // and Mom Weather™ live on the module's own clock. Subscribe before init —
+    // a gap-death detected at session start must reach App and chat.
+    this._offRetention = Retention.subscribe((snap)=>this.onRetentionEvent(snap));
+    this._offVaultSub = Vault.subscribe((v)=>this.onVaultChange(v));
+    this._offMomWeather = Bus.on(EVENTS.MOMWEATHER_EVENT, (p)=>this.onMomWeather(p));
+    this._vaultRecal = Vault.get().recalibrations; // the toast fires on new recalibrations only
+    Retention.init({ balanceBB: balance });
+    this.setState({
+      retention: Retention.get(),
+      comebackEnvelope: Retention.get().comebackPending,
+      vaultSnap: Vault.get(),
     });
     Ticker.init({ balanceBB: balance });
     Bus.emit(EVENTS.SESSION_STARTED, {returning, balanceBB: balance});
@@ -505,6 +523,10 @@ class App extends React.Component {
     if (this._offInt) this._offInt.forEach((off) => off());
     if (this._offSlPanic) this._offSlPanic();
     if (this._offSlSettled) this._offSlSettled();
+    // #31 retention
+    if (this._offRetention) this._offRetention();
+    if (this._offVaultSub) this._offVaultSub();
+    if (this._offMomWeather) this._offMomWeather();
     if (this._onVisibility) document.removeEventListener("visibilitychange", this._onVisibility);
     if (this._offMood) this._offMood();
     if (this._offIdent) this._offIdent();
@@ -730,6 +752,14 @@ class App extends React.Component {
       "Your College Fund Crash kept running. It crashed at "+(r.mult ? r.mult.toFixed(2) : "1.01")+"x while you were studying. Cash-out was evaded "+r.evades+" times (you weren't here to try)."
     );
     if (this._panicForfeitLine) roundLines.push(this._panicForfeitLine); // §5: the Quickscope clause
+    // #31 retention: disguise time is absence (integration §5) — a ≥2h hide can
+    // deliver the Comeback Key™ on the receipt itself; the welcome-back moment
+    // carries both condolences and congratulations when the streak died too.
+    const retentionSnap = Retention.get();
+    if (retentionSnap.comebackPending) {
+      roundLines.push(retentionSnap.comebackDual ? RETENTION_COPY.comebackDual : RETENTION_COPY.comebackEnvelope);
+      this.setState({comebackEnvelope:true});
+    }
     this.setState({
       panicActive:false, panicEssay:null, panicFileMenu:false, panicMoodShown:false,
       panicWelcome:{
@@ -1248,12 +1278,17 @@ class App extends React.Component {
     if (!this.spendBB("crates")) return;
     this._crateRound = this.nextRoundId();
     this._crateWagered = true;
+    this._crateRebound = false; // rebound rides free keys only
     Bus.emit(EVENTS.ROUND_STARTED, {surface:"crates", roundId:this._crateRound, priceBB:GAME_PRICES_BB.crates, wagered:true});
     this.setState({crateKeyBought:true});
   }
   useFreeKey(){
     if (this.state.crateFreeKeyCount <= 0) return;
-    this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount-1, crateKeyBought:true}));
+    // #31: a Comeback Key™ marks the next free key as a Rebound Crate —
+    // identical odds and pool, defuse pinned at the 28.0s cap.
+    const rebound = this.state.crateNextKeyKind === "rebound";
+    this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount-1, crateKeyBought:true, crateNextKeyKind:null}));
+    this._crateRebound = rebound;
     this._crateRound = this.nextRoundId();
     this._crateWagered = false;
     Bus.emit(EVENTS.ROUND_STARTED, {surface:"crates", roundId:this._crateRound, priceBB:0, wagered:false});
@@ -1273,7 +1308,11 @@ class App extends React.Component {
     this.setState(s=>({
       crateMomKeyClaimableToday:false, crateMomKeyStreak:streak, crateFreeKeyCount:s.crateFreeKeyCount+1,
     }));
-    this.toast("MOM (envelope, return address: she doesn't know) — Days Mom Checked In: "+streak+(streak>=3 ? " — upgraded to Premium Mom Crate (Matte) (identical odds, shinier box)" : ""));
+    // #31 reconciliation (integration handoffs: "matte envelope ≡ Attendance
+    // Streak ≥7"): the matte trim reads the Attendance Streak, superseding the
+    // crate streak's own 3-day gate. "Days Mom Checked In" keeps counting.
+    const matte = Retention.get().attendance.matte;
+    this.toast("MOM (envelope, return address: she doesn't know) — Days Mom Checked In: "+streak+(matte ? " — upgraded to Premium Mom Crate (Matte) (identical odds, shinier box)" : ""));
     this.pushTicker("A key arrived from Mom (no return address)");
   }
   dismissCrateEnvelope(){
@@ -1281,7 +1320,9 @@ class App extends React.Component {
   }
   openCrate(){
     if (this.state.crateOpening || !this.state.crateKeyBought) return;
-    const totalMs = defuseDurationMs(this.state.crateSessionOpened);
+    // #31: the Rebound Crate starts at the 28.0s session cap — the locks rusted
+    // while you were gone (retention spec §3).
+    const totalMs = this._crateRebound ? CRATE_CAP_SECONDS*1000 : defuseDurationMs(this.state.crateSessionOpened);
     this._crateStages = buildDefuseStages(totalMs, 0);
     this.setState({
       crateOpening:true, crateProgress:0, crateStage:"lock1", crateCaption:this._crateStages[0].caption,
@@ -1347,6 +1388,9 @@ class App extends React.Component {
   _crateFinishAward(award){
     const wagered = this._crateWagered;
     const roundId = this._crateRound;
+    const rebound = !!this._crateRebound;
+    this._crateRebound = false;
+    this._crateLastWagered = wagered;
     const dupe = this.state.crateDupeIds.includes(award.id);
     const pityRes = incrementPity(this.state.cratePity);
     const dupeIds = dupe ? this.state.crateDupeIds : [...this.state.crateDupeIds, award.id];
@@ -1362,6 +1406,7 @@ class App extends React.Component {
         ? "Duplicate detected. Recycled. +0 Environmental Credits (rounded down, §8.9). ("+award.name+")"
         : "Added to Inventory · Non-Tradeable · Withdrawal ETA: pending (§1.3) — "+award.name,
     });
+    if (rebound) this.setState(s=>({crateResult: s.crateResult + " (the same JPEGs, sadder)"}));
     this.saveCratePersist({pity:pityRes.value, dupeIds});
     this.settleRound("crates", roundId, kind, {
       wagered, priceBB: wagered ? GAME_PRICES_BB.crates : 0,
@@ -1761,14 +1806,77 @@ class App extends React.Component {
   slHostage(){
     const st = this.state.stats || {};
     const vault = Vault.get();
+    const streak = (Retention.get().attendance.current) || 0; // #31: the real streak (was days-since-firstSeen)
     const firstSeen = st.firstSeen ? Math.max(1, Math.round((Date.now() - new Date(st.firstSeen+"T00:00:00").getTime())/86400000)) : 1;
     return {
-      streakDays: firstSeen,
+      streakDays: streak || firstSeen,
       vaultBB: Math.round(vault.bb*10)/10,
       pity: this.state.cratePity || 0,
       withdrawals: st.withdrawalsPending || 0,
       momKey: true,
     };
+  }
+
+  // ---- Retention mechanics (#31): the family that keeps you ------------------
+  onRetentionEvent(snap){
+    this.setState({retention:snap, comebackEnvelope:snap.comebackPending});
+    for (const ev of (snap.events||[])) {
+      if (ev.kind === "death") {
+        this.toast(RETENTION_COPY.deathChat.replace("{n}", ev.days));
+      } else if (ev.kind === "warning" && ev.stage === 1) {
+        this.toast(RETENTION_COPY.warn2000); // 22:00/23:30 are host DMs — chat renders those
+      } else if (ev.kind === "milestone") {
+        if (ev.days === 7) this.toast("Attendance Streak™ day 7 — the Daily Mom Key envelope upgrades to Premium Matte (identical odds, matte-er) (§4.2).");
+        if (ev.days === 30) this.awardMomCoupon();
+        if (ev.days === 100) this.applyMemorialRename();
+      } else if (ev.kind === "rank-up") {
+        this.fireConfetti();
+        this.toast(RETENTION_COPY.rankUpToast);
+        this.toast(RETENTION_COPY.rankUpFootnote, {faint:true});
+      }
+    }
+  }
+  awardMomCoupon(){
+    Inventory.award({id:"mom-coupon", name:"Mom Coupon™", value:"$0.00", source:"attendance-30"});
+    this.toast("Mom Coupon™ awarded — redeemable only when the mood is Generous (today: "+(this.state.moodWord||Mood.word())+"). It is in your Inventory, being decorative.");
+    this.pushTicker(this.playerTagOrYou()+" received a Mom Coupon™ (mood: "+Mood.word()+")");
+  }
+  applyMemorialRename(){
+    const tag = this.playerTagOrYou();
+    const jpeg = Inventory.list().find((e)=>e.itemClass==="digital-asset" && /\.(jpe?g|png)$/i.test(e.name||""));
+    if (!jpeg) {
+      Retention.oweMemorial(); // the rename is owed, not lost
+      this.toast("The "+tag+" Memorial is reserved. One (1) Stock JPEG will be renamed the moment you own one (§1.3).");
+      return;
+    }
+    if (!Retention.claimMemorial()) return; // the house does not over-honor
+    Inventory.update(jpeg.id, {name:"The "+tag+" Memorial"});
+    Inventory.appendProvenance(jpeg.id, "Renamed by the house (Attendance Streak day 100). It was always yours in name only (§8.9).");
+    this.toast("The "+tag+" Memorial — one (1) Stock JPEG was formally renamed in your honor (§8.9).");
+    this.pushTicker("A Stock JPEG was renamed The "+tag+" Memorial (attendance: 100 days)");
+  }
+  maybeApplyMemorialDebt(){
+    if (Retention.memorialOwed()) this.applyMemorialRename();
+  }
+  onVaultChange(v){
+    const prev = this._vaultRecal || 0;
+    this._vaultRecal = v.recalibrations;
+    this.setState({vaultSnap:v});
+    if (v.recalibrations > prev) this.toast("Rakeback vault recalibrated: mood improved! (§8.9)");
+  }
+  onMomWeather(p){
+    if (p && p.covered === false) {
+      this.awardBB(1, "mom-weather"); // rain can never fund a play (3 BB minimum); it can taste one
+      this.toast("MOM WEATHER™ — 1 BB rained on you. It cannot fund a play. It can taste one.");
+    }
+    this.toast(RETENTION_COPY.rainHonesty, {faint:true});
+  }
+  claimComebackKey(){
+    if (!this.state.comebackEnvelope) return;
+    Retention.consumeComeback(); // the subscriber sync clears the envelope
+    this.setState(s=>({crateFreeKeyCount:s.crateFreeKeyCount+1, crateNextKeyKind:"rebound"}));
+    this.toast("Comeback Key™ claimed. The Rebound Crate: the same JPEGs, sadder. The locks rusted while you were gone (28.0s).");
+    this.pushTicker(this.playerTagOrYou()+" claimed a Comeback Key™ (the seat was warm, it cost nothing)");
   }
 
   renderVals(){
@@ -1951,8 +2059,29 @@ class App extends React.Component {
       crateInventoryCount:s.crateHeldCount,
       crateMomKeyClaimableToday:s.crateMomKeyClaimableToday, crateMomKeyStreak:s.crateMomKeyStreak,
       claimDailyMomKey:()=>this.claimDailyMomKey(),
-      momKeyBoxLabel: s.crateMomKeyStreak>=3 ? "Premium Mom Crate (Matte)" : "MOM (envelope)",
+      // #31: matte ≡ Attendance Streak ≥7 (integration handoffs) — the crate's
+      // own 3-day gate is superseded by the reconciliation ruling.
+      momKeyMatte: (s.retention||Retention.get()).attendance.matte,
+      momKeyBoxLabel: (s.retention||Retention.get()).attendance.matte ? "Premium Mom Crate (Matte)" : "MOM (envelope)",
       crateEnvelope:s.crateEnvelope, dismissCrateEnvelope:()=>this.dismissCrateEnvelope(),
+
+      // Retention mechanics (#31)
+      attendChip: (()=>{ const a = (s.retention||Retention.get()).attendance;
+        if (a.current > 0) return { label:"🔥 "+a.current, gold:a.current>=7, pulse:a.pulseEvening };
+        if (a.tombstoneDay) return { label:"🪦 "+a.tombstoneDays, tombstone:true };
+        return null; })(),
+      attendTitle: RETENTION_COPY.honestyStreak+"\n"+RETENTION_COPY.longestLabel+": "+(s.retention||Retention.get()).attendance.longest+" days\nAttendance day = a calendar day with ≥1 wagered round. Watching is not losing (§4.2).",
+      vipChip: (()=>{ const v = (s.retention||Retention.get()).vip;
+        return { label:v.chip, gray:!v.ranked||v.underReview, review:v.underReview }; })(),
+      vipTitle: (()=>{ const v = (s.retention||Retention.get()).vip;
+        return v.perk+"\nThis week: $"+v.weekBorrowed.toFixed(2)+" of $"+v.weekRequirement.toFixed(2)+". Mom is watching the meter.\n"+v.ladderJoke+(v.underReview ? "\nNothing is ever lost at Hot For E-Skins 2026 except money (§8.9)." : ""); })(),
+      attendLongest: (s.retention||Retention.get()).attendance.longest,
+      comebackEnvelope:s.comebackEnvelope, claimComebackKey:()=>this.claimComebackKey(),
+      comebackCopy: RETENTION_COPY.comebackEnvelope,
+      crateReboundCaption: this._crateRebound && s.crateOpening ? " (the locks rusted while you were gone)" : "",
+      crateRakebackLine: this._crateLastWagered ? Vault.receiptLine() : null,
+      crashRakebackLine: Vault.receiptLine(),
+      vaultWidget: s.vaultSnap || Vault.get(),
 
       // Marketplace & Inventory (#27)
       invOpen:s.invOpen, openInventory:()=>this.openInventory(), closeInventory:()=>this.closeInventory(),
@@ -2168,6 +2297,7 @@ class App extends React.Component {
               <span style={{color:"#a9705a"}}>Withdrawals pending</span><b style={{color:"#ffb347"}}>{v.statsWithdrawals} (see §1.3)</b>
               <span style={{color:"#a9705a"}}>Worst single loss</span><b style={{color:"#ffb347"}}>{fmtBB(v.statsWorst)} BB</b>
               <span style={{color:"#a9705a"}}>Losing streak</span><b style={{color:"#ffb347"}}>{v.statsStreak}</b>
+              <span style={{color:"#a9705a"}} title="Streaks measure engagement, not enjoyment (§8.9).">Longest streak (unbeaten, like the house)</span><b style={{color:"#ffb347"}}>{v.attendLongest} days</b>
             </div>
           </div>
 
@@ -2263,6 +2393,18 @@ class App extends React.Component {
                 <div onClick={v.openInventory} title="Inventory & Portfolio — the destination, not a game" style={{background:"#0e0a06",border:"1px solid #8fd97a",borderRadius:"6px",padding:"7px 12px",cursor:"pointer",color:"#8fd97a",fontWeight:700,whiteSpace:"nowrap",fontSize:"11px"}}>
                   PORTFOLIO: {fmtUSD(v.portfolio.total)} (est. ▲)
                 </div>
+                {/* #31 Attendance Streak™ — days lost, not logins; tombstone the day after a death */}
+                {v.attendChip && (
+                  <div title={v.attendTitle} style={{background:"#0e0a06",border:"1px solid "+(v.attendChip.tombstone?"#5a4232":(v.attendChip.gold?"#ffd54a":(v.attendChip.pulse?"#e24a4a":"#ff8a3d"))),borderRadius:"6px",padding:"7px 10px",fontSize:"9.5px",fontWeight:700,color:v.attendChip.tombstone?"#8a6a52":(v.attendChip.gold?"#ffd54a":"#ff8a3d"),whiteSpace:"nowrap",animation:v.attendChip.pulse?"streakPulse 1.1s infinite":"none"}}>
+                    {v.attendChip.label}
+                  </div>
+                )}
+                {/* #31 VIP tier chip — grays to UNDER REVIEW; the ladder measures volume, never outcomes */}
+                {v.vipChip && (
+                  <div title={v.vipTitle} style={{background:"#0e0a06",border:"1px solid "+(v.vipChip.review?"#6a5a4a":"#ff9ad5"),borderRadius:"6px",padding:"7px 10px",fontSize:"9.5px",fontWeight:700,color:v.vipChip.gray?"#8a7a6a":"#ff9ad5",whiteSpace:"nowrap",fontStyle:v.vipChip.review?"italic":"normal"}}>
+                    {v.vipChip.label}
+                  </div>
+                )}
                 {v.streakChip && (
                   <div style={{background:"#0e0a06",border:"1px solid #8fd97a",borderRadius:"6px",padding:"7px 10px",fontSize:"9.5px",color:"#8fd97a",whiteSpace:"nowrap"}}>Deposit streak: 1/2 — deposit tomorrow to keep it <span style={{color:"#5a7a4a"}}>(streaks are a fact we made up)</span></div>
                 )}
@@ -2341,6 +2483,26 @@ class App extends React.Component {
                     <div style={{background:"#3a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"6px 10px",marginBottom:"10px",fontSize:"11px",color:"#ffcf9a",fontWeight:700}}>
                       🔥 {v.rouletteBannerNames[0]} won big* — Last 7 spinners won big*
                       <div style={{fontSize:"8px",opacity:0.4,fontWeight:400,marginTop:"2px"}}>* "won big" measured in estimated value, not withdrawable value. Withdrawable value of all winnings is $0.00 (see ToS §1.3).</div>
+                    </div>
+                    {/* #31: the ONE Rakeback Vault — the roulette tab's widget is the featured
+                        display (integration §8); the same shared number renders on every receipt */}
+                    <div style={{background:"#0e0a06",border:"1px solid #7a5a2a",borderRadius:"6px",padding:"8px 12px",marginBottom:"10px"}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",flexWrap:"wrap",gap:"6px"}}>
+                        <div style={{fontSize:"10.5px",fontWeight:800,color:"#ffd54a",letterSpacing:"0.5px"}}>RAKEBACK VAULT (site-wide)</div>
+                        <div style={{fontSize:"10px",color:"#e8a52a"}}>{v.vaultWidget.bb.toFixed(1)} / 100 BB · recalibrations: {v.vaultWidget.recalibrations}</div>
+                      </div>
+                      <div style={{background:"#160a04",borderRadius:"4px",height:"7px",overflow:"hidden",margin:"6px 0"}}>
+                        <div style={{height:"100%",width:Math.min(100,v.vaultWidget.bb)+"%",background:"linear-gradient(90deg,#7a5a2a,#ffd54a)",transition:"width 0.3s"}}></div>
+                      </div>
+                      <div style={{fontSize:"9px",color:"#a9705a"}}>
+                        Coinflip +0.1/flip ({v.vaultWidget.feeds.coinflip.toFixed(1)}) · Roulette +0.1/spin ({v.vaultWidget.feeds.roulette.toFixed(1)}) · Crash +0.1/run ({v.vaultWidget.feeds.crash.toFixed(1)}) · Crate key +0.2/key ({v.vaultWidget.feeds.crates.toFixed(1)}) — premium games accrue faster (to nothing, faster)
+                      </div>
+                      <div style={{fontSize:"8px",color:"#6a4a38",marginTop:"2px"}}>House-sit fills accrue under your name, to no avail: {v.vaultWidget.feeds.houseSat.toFixed(1)} BB · Free keys feed nothing.</div>
+                      <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"6px",flexWrap:"wrap"}}>
+                        <button disabled style={{background:"#241005",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:800,fontSize:"10px",padding:"5px 10px",borderRadius:"5px",cursor:"not-allowed"}}>Claim 100 BB</button>
+                        <span style={{fontSize:"8.5px",color:"#8a6a52",fontStyle:"italic"}}>keep losing! (encouragement)</span>
+                        <span style={{fontSize:"8px",color:"#6a4a38"}}>recalibrates at 99.9 BB (mood improved! §8.9) — 100 is unreachable by construction</span>
+                      </div>
                     </div>
                     <div style={{position:"relative",overflow:"hidden",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",height:"120px"}}>
                       <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:"3px",background:"#ffe9d6",zIndex:5,boxShadow:"0 0 10px #ffe9d6"}}></div>
@@ -2525,6 +2687,9 @@ class App extends React.Component {
                     {v.crashResult && (
                       <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.crashResult}</div>
                     )}
+                    {v.crashResult && v.crashRakebackLine && (
+                      <div style={{marginTop:"5px",fontSize:"8.5px",color:"#8a6a52"}}>{v.crashRakebackLine}</div>
+                    )}
                     {v.replayCrash ? (
                       <button onClick={v.topUpAndPlayCrash} style={{marginTop:"10px",background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"2px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"13px",padding:"10px 18px",borderRadius:"8px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Top Up &amp; Play Again</button>
                     ) : null}
@@ -2561,6 +2726,14 @@ class App extends React.Component {
                       </div>
                     )}
 
+                    {/* #31: the Comeback Key™ — ≥2h absent (MOM'S HOME time counts), max once per 24h */}
+                    {v.comebackEnvelope && (
+                      <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ff9ad5",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
+                        <span style={{fontSize:"11.5px",color:"#ff9ad5"}}>Comeback Key™ — MOM (she doesn't know): {v.comebackCopy}</span>
+                        <button onClick={v.claimComebackKey} style={{background:"linear-gradient(180deg,#ff9ad5,#c95a9a)",border:"2px solid #ffd6ea",color:"#2a0e05",fontWeight:900,fontSize:"11.5px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Claim Comeback Key™</button>
+                      </div>
+                    )}
+
                     {v.crateMomKeyClaimableToday && (
                       <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
                         <span style={{fontSize:"11.5px",color:"#ffd54a"}}>{v.momKeyBoxLabel} dropped from the top of the screen. Return address: MOM (she doesn't know). Days Mom Checked In: {v.crateMomKeyStreak}.</span>
@@ -2569,8 +2742,8 @@ class App extends React.Component {
                     )}
 
                     <div style={{display:"flex",gap:"24px",alignItems:"center",flexWrap:"wrap"}}>
-                      <div key={v.momKeyBoxLabel} style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:v.crateMomKeyStreak>=3?"3px solid #ffd54a":"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim,boxShadow:v.crateMomKeyStreak>=3?"0 0 18px rgba(255,213,74,0.45)":"none"}}>
-                        <div style={{position:"absolute",inset:"30% 0",height:"14px",background:v.crateMomKeyStreak>=3?"#ffd54a":"#7a5a2a"}}></div>
+                      <div key={v.momKeyBoxLabel} style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:v.momKeyMatte?"3px solid #ffd54a":"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim,boxShadow:v.momKeyMatte?"0 0 18px rgba(255,213,74,0.45)":"none"}}>
+                        <div style={{position:"absolute",inset:"30% 0",height:"14px",background:v.momKeyMatte?"#ffd54a":"#7a5a2a"}}></div>
                       </div>
                       <div style={{flex:1,minWidth:"220px"}}>
                         {!v.crateKeyBought && !v.crateOpening && (
@@ -2590,7 +2763,7 @@ class App extends React.Component {
                             <div style={{background:"#0e0a06",borderRadius:"5px",height:"8px",overflow:"hidden"}}>
                               <div style={{height:"100%",width:`${v.crateProgress}%`,background:"linear-gradient(90deg,#ff8a3d,#ffd54a)",transition:"width 0.1s linear"}}></div>
                             </div>
-                            <div style={{fontSize:"9.5px",color:"#8a6a52",marginTop:"6px"}}>{v.trackNameCaption}</div>
+                            <div style={{fontSize:"9.5px",color:"#8a6a52",marginTop:"6px"}}>{v.trackNameCaption}{v.crateReboundCaption}</div>
                             {v.crateSkipAvailable && !v.crateSkipUsed && (
                               <div style={{marginTop:"8px"}}>
                                 <button onClick={v.skipCrate} style={{background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>{v.crateSkipLabel}</button>
@@ -2619,9 +2792,10 @@ class App extends React.Component {
                               <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:RARITY_COLORS[v.crateAward.tier]||"#ff8a3d",letterSpacing:"1px"}}>{v.crateAward.tier.toUpperCase()}</div>
                               <div style={{fontSize:"13px",fontWeight:800,color:"#ffe9d6",margin:"6px 0"}}>{v.crateAward.name}</div>
                               <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ Downloads: 4,000,000</div>
-                              <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
-                            </div>
-                            <button onClick={v.toggleInspectCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Inspect JPEG</button>
+                            <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
+                            {v.crateRakebackLine && <div style={{fontSize:"8.5px",color:"#8a6a52",marginTop:"6px"}}>{v.crateRakebackLine}</div>}
+                          </div>
+                          <button onClick={v.toggleInspectCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Inspect JPEG</button>
                           </div>
                         )}
                         {v.crateResult && v.crateRevealPhase!=="reel" && (

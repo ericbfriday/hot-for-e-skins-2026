@@ -6,7 +6,10 @@ const RECALIBRATION_AT_BB = 99.9;
 const CLAIM_CEILING_BB = 100;
 
 function blank() {
-  return { bb: 0, recalibrations: 0, feeds: { coinflip: 0, roulette: 0, crash: 0, crates: 0 } };
+  // houseSat is the fifth, display-dim bucket (#31): house-sit fills accrue to
+  // the vault under the player's name, to no avail (integration §8). The four
+  // game feeds stay the spec'd headline.
+  return { bb: 0, recalibrations: 0, feeds: { coinflip: 0, roulette: 0, crash: 0, crates: 0, houseSat: 0 } };
 }
 function sanitize(v) {
   const base = blank();
@@ -50,6 +53,21 @@ Bus.on(EVENTS.ROUND_SETTLED, (p) => {
   lastAccrualBB = rate;
   state.feeds[p.surface] = +(state.feeds[p.surface] + rate).toFixed(4);
   state.bb = +(state.bb + rate).toFixed(4);
+  if (state.bb >= RECALIBRATION_AT_BB) {
+    state.bb = +(1 + Math.random() * 36).toFixed(4);
+    state.recalibrations += 1;
+  }
+  commit();
+});
+
+// #31 retention (integration §8): house-sit fills accrue under the player's
+// name, to no avail — 0.1 BB per fill, the generic round rate, into the dim
+// houseSat bucket. Same recalibration move as everything else.
+Bus.on(EVENTS.MIKE_WIN, (p) => {
+  if (!p || p.class !== "house-sat") return;
+  lastAccrualBB = 0.1;
+  state.feeds.houseSat = +((state.feeds.houseSat || 0) + 0.1).toFixed(4);
+  state.bb = +(state.bb + 0.1).toFixed(4);
   if (state.bb >= RECALIBRATION_AT_BB) {
     state.bb = +(1 + Math.random() * 36).toFixed(4);
     state.recalibrations += 1;

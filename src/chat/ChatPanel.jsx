@@ -4,6 +4,7 @@ import { Bus, EVENTS, Regime } from "../spine/bus.js";
 import { Identity, RESERVED_CAST, YOU_COLOR } from "../spine/identity.js";
 import { POPULATION } from "../spine/constants.js";
 import { HouseBand, BAND_PRIORITIES } from "../spine/band.js";
+import { Retention, COPY as RETENTION_COPY } from "../retention/state.js";
 import { createPersonaSession, pickArchetype, pickLine } from "./personas.js";
 import {
   SCROLLBACK_MAX, FADE_MS, ARCHIVE_MS, ARCHIVE_LINE,
@@ -34,6 +35,8 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
   const [timeoutUntil, setTimeoutUntil] = useState(null);
   const [timeoutReason, setTimeoutReason] = useState(null);
   const [tick, setTick] = useState(0);
+  const [rainFx, setRainFx] = useState(null);      // #31 Mom Weather™ falling emoji
+  const [umbrellaUntil, setUmbrellaUntil] = useState(0);
 
   const idRef = useRef(0);
   const personaRef = useRef(createPersonaSession());
@@ -68,11 +71,11 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
     return pushEntry({ user: name, color: c ? c.color : "#e8c9ac", badge: c ? c.badge : undefined, msg, ...extra });
   }, [pushEntry]);
 
-  const pushWhisper = useCallback((text) => {
+  const pushWhisper = useCallback((text, extra = {}) => {
     // The audible layer: a soft close-mic'd breath-chime, above the crowd,
     // bypassing the mute (audio-gags §3 — "it's intimate like that").
     HouseBand.play("mom.whisper", { priority: BAND_PRIORITIES.P3_SOCIAL });
-    return pushEntry({ user: "MOM", badge: "[VIP HOST]", color: "#ff9ad5", msg: text, whisper: true, pinned: true });
+    return pushEntry({ user: "MOM", badge: "[VIP HOST]", color: "#ff9ad5", msg: text, whisper: true, pinned: true, ...extra });
   }, [pushEntry]);
 
   const pushAmbientLine = useCallback((text, archetypeOverride) => {
@@ -413,6 +416,42 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
       if (Math.random() < 0.4) addTimer(() => pushAmbientLine(playerTag() + "'s on a heater (someone is)"), 500);
     }));
 
+    // #31 retention: VIP Host Mom's DMs are whispers (MOM never speaks in public
+    // chat — canon), the streak obituary is a highlighted system line, and the
+    // 22:00/23:30 rungs of the evening ladder land here as host DMs.
+    offs.push(Retention.subscribe((snap) => {
+      for (const ev of (snap.events || [])) {
+        if (ev.kind === "death") {
+          pushEntry({ system: true, highlight: true, msg: RETENTION_COPY.deathChat.replace("{n}", String(ev.days)) });
+          addTimer(() => pushWhisper(RETENTION_COPY.condolence), 2600);
+        } else if (ev.kind === "warning" && ev.stage === 2) {
+          pushWhisper(RETENTION_COPY.warn2200);
+        } else if (ev.kind === "warning" && ev.stage === 3) {
+          pushWhisper(RETENTION_COPY.warn2330.replace("{n}", String((snap.attendance && snap.attendance.current) || ev.days || 1)), { highlight: true });
+        } else if (ev.kind === "assigned") {
+          pushWhisper(RETENTION_COPY.assigned);
+        } else if (ev.kind === "rank-up") {
+          pushWhisper(RETENTION_COPY.rankUpDm.replace("{tier}", ev.tier || "Bronze 7"));
+        } else if (ev.kind === "velvet") {
+          pushWhisper(ev.copy || RETENTION_COPY.velvet);
+        } else if (ev.kind === "monday") {
+          pushWhisper(ev.underReview ? RETENTION_COPY.underReviewDm : (ev.summary || RETENTION_COPY.mondaySummary));
+        }
+      }
+    }));
+
+    // #31: Mom Weather™ — the thunder rides the Band's armed cue (momweather.event);
+    // the room sees the [BOT] line, rain falls on the lapsed, and the covered
+    // get an umbrella over their chip.
+    offs.push(Bus.on(EVENTS.MOMWEATHER_EVENT, (p) => {
+      const covered = !!(p && p.covered);
+      pushCast("AdminTradeBot_69", (covered ? RETENTION_COPY.momWeatherCovered : RETENTION_COPY.momWeatherSoaked).replace("{tag}", playerTag()));
+      setRainFx({ key: Date.now() });
+      addTimer(() => setRainFx(null), 4200);
+      if (covered) setUmbrellaUntil(Date.now() + 40000);
+      if (!covered) addTimer(() => pushAmbientLine("ty MOM!!"), 1400);
+    }));
+
     scheduleAmbient();
     const tickInt = setInterval(() => setTick((n) => n + 1), 5000);
 
@@ -455,18 +494,24 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
         >
           LIVE CHAT ({onlineCount} online)
         </div>
+        {now < umbrellaUntil && (
+          <span title="You deposited in the last 6 hours. The rain is an engagement precipitation event (§8.9)." style={{ fontSize: "9px", color: "#8fd97a", fontStyle: "italic" }}>{RETENTION_COPY.umbrella}</span>
+        )}
       </div>
-      <div style={{ background: "#0e0a06", border: "1px solid #3a2a1a", borderRadius: "6px", padding: "10px", maxHeight: "170px", overflowY: "auto", display: "flex", flexDirection: "column-reverse" }}>
+      <div style={{ background: "#0e0a06", border: "1px solid #3a2a1a", borderRadius: "6px", padding: "10px", maxHeight: "170px", overflowY: "auto", display: "flex", flexDirection: "column-reverse", position: "relative" }}>
+        {rainFx && [8, 20, 32, 44, 56, 68, 80, 92].map((left, i) => (
+          <span key={rainFx.key + "-" + i} style={{ position: "absolute", top: 0, left: left + "%", fontSize: "12px", pointerEvents: "none", zIndex: 3, animation: `rainFall ${1.6 + (i % 4) * 0.45}s linear ${i * 0.26}s 2` }}>🌧</span>
+        ))}
         {visible.map((e) => {
           if (e.archive) return <div key="archive" style={{ fontSize: "10px", color: "#5a4232", fontStyle: "italic", padding: "4px 0" }}>{ARCHIVE_LINE}</div>;
           const age = now - e.ts;
           const faded = !e.pinned && age >= FADE_MS;
           if (e.system) {
-            return <div key={e.id} style={{ fontSize: "10px", color: "#8a6a52", fontStyle: "italic", margin: "3px 0" }}>{e.msg}</div>;
+            return <div key={e.id} style={{ fontSize: e.highlight ? "10.5px" : "10px", color: e.highlight ? "#ff6a6a" : "#8a6a52", fontStyle: "italic", margin: "3px 0", fontWeight: e.highlight ? 700 : 400, border: e.highlight ? "1px dashed #e24a4a" : "none", borderRadius: "4px", padding: e.highlight ? "5px 7px" : 0 }}>{e.msg}</div>;
           }
           if (e.whisper) {
             return (
-              <div key={e.id} onClick={onWhisperClick} style={{ cursor: "pointer", fontSize: "11px", color: "#ff9ad5", fontStyle: "italic", border: "1px solid #ff9ad5", borderRadius: "5px", padding: "5px 7px", margin: "4px 0", background: "#2a0e1a" }}>
+              <div key={e.id} onClick={onWhisperClick} style={{ cursor: "pointer", fontSize: "11px", color: "#ff9ad5", fontStyle: "italic", border: e.highlight ? "1px solid #e24a4a" : "1px solid #ff9ad5", borderRadius: "5px", padding: "5px 7px", margin: "4px 0", background: e.highlight ? "#2a0e12" : "#2a0e1a", boxShadow: e.highlight ? "0 0 12px rgba(226,74,74,0.35)" : "none" }}>
                 <b>WHISPER FROM MOM</b><br />{e.msg}
               </div>
             );
