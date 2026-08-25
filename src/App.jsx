@@ -1,6 +1,6 @@
 import React from 'react'
 import { Mood } from "./spine/mood.js";
-import { Bus, EVENTS } from "./spine/bus.js";
+import { Bus, EVENTS, Regime } from "./spine/bus.js"; // #32: Regime.current() read-only — the ticker owns the rules
 import { Vault } from "./spine/vault.js";
 import { HouseBand, BAND_PRIORITIES, MUTE_TOOLTIP, MUTE_FINE_PRINT, SIREN_DISCLOSURE, BAND_FOOTER_CREDIT, AUTOPLAY_NOTE, RESTORE_TOAST } from "./spine/band.js";
 import { Identity, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
@@ -20,7 +20,8 @@ import {
 import {
   GAME_PRICES_BB, MATERNAL_STARTER_GRANT_BB, DESPERATION_THRESHOLD_BB,
   V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE,
-  NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY
+  NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY,
+  DESPERATION_TAGLINE, DESPERATION_TAGLINE_FOOTNOTE,
 } from "./spine/constants.js";
 import {
   fundNameForRun, dodgeStage, dodgeLabel, dodgeOffset, dodgeScale,
@@ -251,6 +252,9 @@ class App extends React.Component {
     retention:null, comebackEnvelope:false, crateNextKeyKind:null, vaultSnap:null,
 
     bandMuted: HouseBand.isMuted(),
+    // #32: the roulette banner consumes regime.changed (integration §6 — one
+    // conductor; the banner owns the tagline slot while the roulette tab shows)
+    regimeDesperate:false,
   };
 
   _tosScrollRef = React.createRef();
@@ -375,6 +379,13 @@ class App extends React.Component {
         this._lastIdleNag = now;
         this.toast("MOM (1 missed call) — she senses opportunity", {actionLabel:"+ Top Up", onAction:()=>this.openAskMom({source:"nag"})});
       }
+      // #32 / integration §13.13: the 60s-idle MOM whisper at BB < 15 — the
+      // register above the 45s system toast (different speaker, no dedupe;
+      // tone bible §2's locked escalation ladder: nag → banner → whisper).
+      if (this.state.balanceBB < 15 && now - this._lastInput > 60000 && now - (this._lastIdleWhisper || 0) > 300000) {
+        this._lastIdleWhisper = now;
+        this.pushChat({user:"MOM", badge:"[VIP HOST]", color:"#ff9ad5", msg:"I notice you're not depositing. I notice everything. ❤", whisper:true, pinned:true});
+      }
     }, 5000);
     this._offBandSettled = Bus.on(EVENTS.ROUND_SETTLED, () => {
       // The House Band flags the first full fanfare after a net-loss win; the
@@ -497,6 +508,22 @@ class App extends React.Component {
     });
     this._offSlSettled = Bus.on(EVENTS.ROUND_SETTLED, (p) => this.slOnSettled(p));
     this.slArmReminder();
+    // #32: the roulette streak banner consumes regime.changed — the ticker owns
+    // transitions, the banner owns the tagline's prominent slot while the
+    // roulette tab is active (integration §6; TickerPanel hides its subtitle
+    // on this tab, so exactly one slot shows it, ever).
+    this._offRegime = Bus.on(EVENTS.REGIME_CHANGED, (p) => {
+      this.setState({regimeDesperate: !!(p && p.to === "desperation")});
+    });
+    // #32 fix: Ticker.init() (which fires the session's first regime transition)
+    // ran earlier in mount than this subscription — a session that OPENS already
+    // Desperate (returning visitor, BB < 6) would otherwise miss the event and
+    // never show the roulette banner. Seed the state from the spine's truth.
+    this.setState({regimeDesperate: Regime.current() === "desperation"});
+    // #32 / #24 deviation 3: the Daily Mom Key unclaimed-24h chat nag — if the
+    // key is still sitting there a full day after the last claim, the room
+    // notices (once per session; crate spec §7 "Unclaimed for 24h → chat nag").
+    setTimeout(()=>this.momKeyNagMaybe(), 15000);
   }
 
   saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
@@ -523,6 +550,7 @@ class App extends React.Component {
     if (this._offInt) this._offInt.forEach((off) => off());
     if (this._offSlPanic) this._offSlPanic();
     if (this._offSlSettled) this._offSlSettled();
+    if (this._offRegime) this._offRegime(); // #32: the roulette banner's regime feed
     // #31 retention
     if (this._offRetention) this._offRetention();
     if (this._offVaultSub) this._offVaultSub();
@@ -855,6 +883,9 @@ class App extends React.Component {
     const wagered = extra.wagered !== false;
     Bus.emit(EVENTS.ROUND_SETTLED, {
       surface, roundId, wagered, priceBB, netBB, kind,
+      // #32: crash settles carry the multiplier so ticker lines can cite the
+      // schedule (additive; other surfaces omit it).
+      mult: typeof extra.mult === "number" ? extra.mult : undefined,
       itemAward: extra.itemAward || null,
       nearMissItem: extra.nearMissItem || null,
       streakAfter: { site: (this.state.stats && this.state.stats.lossStreak) || 0, surface: extra.surfaceStreak || 0 },
@@ -965,6 +996,7 @@ class App extends React.Component {
     }));
 
     this.settleRound("roulette", roundId, kind, {priceBB:price, netBB, itemAward, nearMissItem, surfaceStreak:streak});
+    this._rouletteVaultLine = Vault.receiptLine(0.1); // this spin's accrual, snapshotted
     if (consolation) {
       if (consolation.kind === "badge") this.pushTicker(tag+" earned the Consistent! badge (losses: 7)");
       if (consolation.kind === "apology") this.pushTicker(tag+" received a formal apology (fee: 1 BB)");
@@ -1033,7 +1065,7 @@ class App extends React.Component {
       itemAward = entry.name;
       resultText = welcome
         ? "Your first one? He lets those go. (One (1) per session, per tradition. §5.4(b).)"
-        : "Admin_TradeBot_69 hands over "+item.name+" (est. "+item.value+"). Withdrawal pending.";
+        : "AdminTradeBot_69 hands over "+item.name+" (est. "+item.value+"). Withdrawal pending."; // #32: canonical spelling (integration §9.10)
     } else if (kind === "nibble") {
       netBB = 0;
       resultText = "You broke even. This is the best available outcome (§5.3).";
@@ -1074,11 +1106,12 @@ class App extends React.Component {
     }));
 
     this.settleRound("coinflip", roundId, kind, {priceBB:price, netBB, itemAward, surfaceStreak:streak});
-    if (taunt) this.setState(s=>({chat:[{user:"Admin_TradeBot_69", msg:taunt.replace("Admin_TradeBot_69: ",""), color:"#e24a4a"}, ...s.chat].slice(0,6)}));
+    this._coinVaultLine = Vault.receiptLine(0.1); // this flip's accrual, snapshotted
+    if (taunt) this.setState(s=>({chat:[{user:"AdminTradeBot_69", msg:taunt.replace("AdminTradeBot_69: ",""), color:"#e24a4a"}, ...s.chat].slice(0,6)}));
     if (botPity) {
       this.creditBB(1);
       this.pushTicker(tag+" received 1 BB from the bot's personal wallet (the house was not consulted (it was))");
-      this.toast("Admin_TradeBot_69 felt something. Here's 1 BB. Don't tell the house.");
+      this.toast("AdminTradeBot_69 felt something. Here's 1 BB. Don't tell the house.");
     }
   }
   coinflipRematch(){ this.playCoinflip(this.state.coinLastCall); }
@@ -1099,7 +1132,7 @@ class App extends React.Component {
   }
   coinDoubleOrNothingDecline(){
     this.setState({coinDoN:null});
-    this.setState(s=>({chat:[{user:"Admin_TradeBot_69", msg:this.playerTagOrYou()+": coward. (respected.)", color:"#e24a4a"}, ...s.chat].slice(0,6)}));
+    this.setState(s=>({chat:[{user:"AdminTradeBot_69", msg:this.playerTagOrYou()+": coward. (respected.)", color:"#e24a4a"}, ...s.chat].slice(0,6)}));
   }
 
   // ---- College Fund Crash ----
@@ -1153,9 +1186,13 @@ class App extends React.Component {
           Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId:this._crashRoundId, beat:"stick"});
         }, 700);
         this.pushChat({
-          user:"definitely_your_conscience",
-          msg: this.state.crashConsecutiveLosses >= 3 ? "take it… take it…" : "CASH OUT CASH OUT CASH OUT",
-          color:"#e8c9ac",
+          // #32 tone sweep: the ROOM shouts CASH OUT (a hype kid, like the on-chart
+          // caption); the conscience persona speaks ONLY "take it… take it…" /
+          // "too late", voiced solely by chat's ROUND_BEAT listener inside widened
+          // sticks (tone bible §3 — scarcity is the dread; chat owns the persona).
+          user: "xX_QuickScope_Xx",
+          msg: "CASH OUT CASH OUT CASH OUT",
+          color:"#ff8a3d",
         });
         setTimeout(()=>{ pausedMs += Date.now() - stickStart; this.setState({crashStickActive:false, crashButtonLabel:"Cash Out"}); clearInterval(this._crashStickPulse); }, script.stickDurationMs);
         return;
@@ -1180,7 +1217,13 @@ class App extends React.Component {
     // the loss lands via round.settled below (chat clears its stick counter on
     // any crash settlement, so the counter is calibrated by stick-window pulses
     // alone: it only reaches 3 inside a widened 3+-consecutive-loss stick)
-    this.settleRound("crash", this._crashRoundId, "crash-run", {surfaceStreak:consecutive});
+    this.settleRound("crash", this._crashRoundId, "crash-run", {
+      surfaceStreak: consecutive, mult: script.crashHeadline,
+    });
+    // #32: snapshot the rakeback receipt line at settle time — the vault's
+    // listener accrues synchronously inside settleRound, so this line cites
+    // THIS run's 0.1 BB, not the site-wide last accrual at re-render time.
+    this._crashRakebackLine = Vault.receiptLine(0.1);
     HouseBand.play("crash.crashed", {priority:BAND_PRIORITIES.P2_GAME, volume:0.8});
     const tag = this.playerTagOrYou();
     this._crashTickerIdx = ((this._crashTickerIdx || 0) + 1) % CRASH_TICKER_TEMPLATES.length;
@@ -1243,7 +1286,10 @@ class App extends React.Component {
             +"Withdrawable balance: $0.00 (unchanged). One (1) character-building win per session (ToS §5.5). "
             +fundName+" survives with "+net+" BB. Use it wisely (you won't).",
         });
-        this.settleRound("crash", roundId, "character-win", {netBB:net, surfaceStreak:0});
+        this.settleRound("crash", roundId, "character-win", {
+          netBB:net, surfaceStreak:0, mult: +(Math.min(this.state.crashMult, 1.6)).toFixed(2),
+        });
+        this._crashRakebackLine = Vault.receiptLine(0.1);
         HouseBand.play("crash.character-win", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
         const tag = this.playerTagOrYou();
         this.pushTicker(tag+" DEFEATED THE HOUSE (net: "+(net>=0?"+":"")+net+" BB, house retains dignity)");
@@ -1257,7 +1303,11 @@ class App extends React.Component {
         });
         // the loss lands
         Bus.emit(EVENTS.ROUND_BEAT, {surface:"crash", roundId, beat:"stick"});
-        this.settleRound("crash", roundId, "crash-run", {surfaceStreak:consecutive});
+        this.settleRound("crash", roundId, "crash-run", {
+          surfaceStreak:consecutive,
+          mult: this._crashScript ? this._crashScript.crashHeadline : 1.01,
+        });
+        this._crashRakebackLine = Vault.receiptLine(0.1);
         this.pushChat({user:"AdminTradeBot_69", msg:"§1.3'd", color:"#e24a4a"});
         if (consecutive >= 3 && consecutive % 3 === 0) this._crashConsolationRebate();
       }
@@ -1314,6 +1364,24 @@ class App extends React.Component {
     const matte = Retention.get().attendance.matte;
     this.toast("MOM (envelope, return address: she doesn't know) — Days Mom Checked In: "+streak+(matte ? " — upgraded to Premium Mom Crate (Matte) (identical odds, shinier box)" : ""));
     this.pushTicker("A key arrived from Mom (no return address)");
+  }
+  // #24 deviation 3, closed by #32: the key sits unclaimed past a full day →
+  // the room notices, once per session (crate spec §7). The nag fires only when
+  // the last claim stamp is at least one full day stale — i.e. the player
+  // skipped a claim day entirely, not merely "hasn't claimed yet today".
+  momKeyNagMaybe(){
+    if (this._momKeyNagged) return;
+    if (!this.state.crateMomKeyClaimableToday) return;
+    try {
+      const lastDay = localStorage.getItem("hfes_crate_momkey_day");
+      // strict: "yesterday" means the key is merely unclaimed today (no nag);
+      // anything older than yesterday means a full claim-day was skipped.
+      if (lastDay && lastDay < dayKeyBefore(localDayKey(), 1)) {
+        this._momKeyNagged = true;
+        const tag = this.playerTagOrYou();
+        this.pushChat({user:"MOD_Chad_Official", msg:"free keys arrive when you least deserve them ("+tag+", yours is just sitting there)", color:"#8fd97a"});
+      }
+    } catch (e) {}
   }
   dismissCrateEnvelope(){
     this.setState({crateEnvelope:null});
@@ -1390,7 +1458,6 @@ class App extends React.Component {
     const roundId = this._crateRound;
     const rebound = !!this._crateRebound;
     this._crateRebound = false;
-    this._crateLastWagered = wagered;
     const dupe = this.state.crateDupeIds.includes(award.id);
     const pityRes = incrementPity(this.state.cratePity);
     const dupeIds = dupe ? this.state.crateDupeIds : [...this.state.crateDupeIds, award.id];
@@ -1413,6 +1480,9 @@ class App extends React.Component {
       netBB: wagered ? -GAME_PRICES_BB.crates : 0,
       itemAward: dupe ? null : award, nearMissItem: FRUIT_ROLL_UP,
     });
+    // #32: snapshot at settle — wagered keys accrue +0.2 (this key's), free
+    // keys feed nothing (integration §8), so the receipt line stays null there.
+    this._crateRakebackLine = wagered ? Vault.receiptLine(0.2) : null;
     HouseBand.play(kind === "legendary-win" || kind === "jackpot" ? "crates.legendary" : "crates.reveal", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
     this.toast("SO CLOSE! You were 1 slot from "+FRUIT_ROLL_UP.name+" ($"+FRUIT_ROLL_UP.value.toFixed(2)+"). (distance does not affect outcome; this reel is a movie; odds: yes)");
     if (pityRes.recalibrated) this.toast("PITY METER RECALIBRATED (mood improved!) (§8.9)");
@@ -1611,7 +1681,13 @@ class App extends React.Component {
     Ticker.emitTicker({ text: line, isYou: true });
   }
   pushChat(entry){
-    this.setState(s=>({chat:[entry, ...s.chat].slice(0,6)}));
+    // #32: game-side chat lines (crash stick chatter, bot taunts, crate
+    // reactions, MOD/gag beats) — stamped with an id and drained into the
+    // real ChatPanel via the gameFeed prop. Before #32 this mini-feed had no
+    // renderer (the #26 placeholder it once fed was replaced by ChatPanel),
+    // so every line written here was invisible.
+    const id = "g" + Date.now() + "-" + (this._chatSeq = (this._chatSeq || 0) + 1);
+    this.setState(s=>({chat:[{...entry, _id:id}, ...s.chat].slice(0,12)}));
   }
   awardBB(amount, reason){
     if (!(amount > 0)) return;
@@ -1837,6 +1913,9 @@ class App extends React.Component {
     }
   }
   awardMomCoupon(){
+    // #32: once-ever (#31 flagged rebuilt streaks re-awarding; the Memorial is
+    // already once-ever, the coupon now matches — the house does not over-honor).
+    if (!Retention.claimCoupon()) return;
     Inventory.award({id:"mom-coupon", name:"Mom Coupon™", value:"$0.00", source:"attendance-30"});
     this.toast("Mom Coupon™ awarded — redeemable only when the mood is Generous (today: "+(this.state.moodWord||Mood.word())+"). It is in your Inventory, being decorative.");
     this.pushTicker(this.playerTagOrYou()+" received a Mom Coupon™ (mood: "+Mood.word()+")");
@@ -1851,9 +1930,12 @@ class App extends React.Component {
     }
     if (!Retention.claimMemorial()) return; // the house does not over-honor
     Inventory.update(jpeg.id, {name:"The "+tag+" Memorial"});
+    // #32: marketplace-flavored copy for the rename (the #27 consumer seat was
+    // unclaimed; the rename is a MARKET event in all but ticker routing).
     Inventory.appendProvenance(jpeg.id, "Renamed by the house (Attendance Streak day 100). It was always yours in name only (§8.9).");
-    this.toast("The "+tag+" Memorial — one (1) Stock JPEG was formally renamed in your honor (§8.9).");
-    this.pushTicker("A Stock JPEG was renamed The "+tag+" Memorial (attendance: 100 days)");
+    Inventory.appendProvenance(jpeg.id, "The MARKET (HFES-10) was notified of the rename. The index did not move (it never has, §8.9).");
+    this.toast("The "+tag+" Memorial — one (1) Stock JPEG was formally renamed in your honor. Estimated value: emotional (unchanged). Non-listable then, non-listable now (§8.9).");
+    this.pushTicker("A Stock JPEG was renamed The "+tag+" Memorial (attendance: 100 days · portfolio impact: none, forever (§8.9))");
   }
   maybeApplyMemorialDebt(){
     if (Retention.memorialOwed()) this.applyMemorialRename();
@@ -1933,7 +2015,9 @@ class App extends React.Component {
       panicFileMenuClose:()=>this.setState({panicFileMenu:false}),
       panicWelcome:s.panicWelcome, panicMoodShown:s.panicMoodShown,
       panicToggleMood:()=>this.panicToggleMood(), panicDismissWelcome:()=>this.panicDismissWelcome(),
-      panicRung: this._panicRung || 1,
+      // (#28 note, closed by #32: the spare renderVals `panicRung` field was
+      // removed — the ladder renders through panicRestoreLabel/panicShowMargin,
+      // which read this._panicRung directly.)
       panicRestoreLabel: restoreLabelFor(this._panicRung || 1),
       panicParagraphs: s.panicEssay ? essayParagraphs(s.panicEssay.subject) : [],
       panicGrowthParas: s.panicEssay
@@ -1981,6 +2065,7 @@ class App extends React.Component {
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
       chatHooks: { gratuity:(n)=>this.chatGratuity(n) },
+      gameFeed: s.chat, // #32: game-side lines drained into the ChatPanel
       activeTab:s.activeTab, tabBg, tabColor,
       isRoulette: s.activeTab==="roulette", isCoinflip: s.activeTab==="coinflip", isCrash: s.activeTab==="crash", isCrates: s.activeTab==="crates",
       setTab_roulette:()=>this.setTab("roulette"), setTab_coinflip:()=>this.setTab("coinflip"),
@@ -1998,7 +2083,12 @@ class App extends React.Component {
       openRouletteFairness:()=>this.openRouletteFairness(), closeRouletteFairness:()=>this.closeRouletteFairness(),
       rouletteJackpotBox:s.rouletteJackpotBox, rouletteCashOut:()=>this.rouletteCashOut(), rouletteKeepSpinning:()=>this.rouletteKeepSpinning(),
       rouletteBannerNames: s.rouletteBannerNames.length ? s.rouletteBannerNames : ["definitely_not_a_bot","MomApproved88","xX_QuickScope_Xx","yeetmaster3000","NotABot_Trust","TotallyRealUser42","GrandmasCreditCard"],
-      rouletteVault: Vault.get(), rouletteVaultLine: Vault.receiptLine(),
+      rouletteDesperate: s.regimeDesperate,
+      // §12.6: while Desperate and Excluded, the footnote renders the house-sat
+      // variant when fill-in lines are on screen — the contradiction is the point.
+      rouletteDesperateFootnote: SelfLimit.excluded() ? DESPERATION_TAGLINE_FOOTNOTE.replace("*estimated", "*estimated (house-sat)") : DESPERATION_TAGLINE_FOOTNOTE,
+      rouletteVault: Vault.get(), rouletteVaultLine: this._rouletteVaultLine || Vault.receiptLine(),
+      coinVaultLine: this._coinVaultLine || Vault.receiptLine(),
       chaseIt:()=>this.chaseIt(), showChaseIt: !!s.rouletteResult && !s.rouletteSpinning && s.rouletteStreak >= 1, chaseItPrice: Roulette.CHASE_IT_PRICE_BB,
       coinFlipping:s.coinFlipping, coinResult:s.coinResult,
       playCoinflipMom:()=>this.playCoinflip("MOM"), playCoinflipS89:()=>this.playCoinflip("§8.9"),
@@ -2054,8 +2144,12 @@ class App extends React.Component {
       crateResult:s.crateResult,
       crateInspectOpen:s.crateInspectOpen, toggleInspectCrate:()=>this.setState(s2=>({crateInspectOpen:!s2.crateInspectOpen})),
       crateAnim: s.crateOpening ? "pulseGlow 0.6s infinite" : "none",
-      cratePity:s.cratePity, cratePityLabel: "Pity Meter: "+s.cratePity+" / 50 — GUARANTEED Rare-or-better every 50 crates!™",
-      cratePityFinePrint:"pity progress may be recalculated based on mood · Rare-or-better is satisfiable by any tier labeled Rare *by us*",
+      // #32 / #24 deviations 1–2: the DupeShield™ label rides the same meter,
+      // and the legendary tier gets its literal odds disclosure (crate §5).
+      cratePity:s.cratePity, cratePityLabel: "Pity Meter / DupeShield™: "+s.cratePity+" / 50 — GUARANTEED Rare-or-better every 50 crates!™",
+      cratePityFinePrint:"pity progress may be recalculated based on mood · Rare-or-better is satisfiable by any tier labeled Rare *by us* · Guaranteed NEW JPEG after 50 crates (the same 50)",
+      crateOddsNote:"Legendary odds: 0.00%*",
+      crateOddsFinePrint:"*rounded down from a smaller number. The two legendaries are reel-only (they are a movie, ToS §4.2).",
       crateInventoryCount:s.crateHeldCount,
       crateMomKeyClaimableToday:s.crateMomKeyClaimableToday, crateMomKeyStreak:s.crateMomKeyStreak,
       claimDailyMomKey:()=>this.claimDailyMomKey(),
@@ -2079,8 +2173,10 @@ class App extends React.Component {
       comebackEnvelope:s.comebackEnvelope, claimComebackKey:()=>this.claimComebackKey(),
       comebackCopy: RETENTION_COPY.comebackEnvelope,
       crateReboundCaption: this._crateRebound && s.crateOpening ? " (the locks rusted while you were gone)" : "",
-      crateRakebackLine: this._crateLastWagered ? Vault.receiptLine() : null,
-      crashRakebackLine: Vault.receiptLine(),
+      // #32: receipt lines snapshotted at settle time (this round's accrual,
+      // not the site-wide last one at re-render time).
+      crateRakebackLine: this._crateRakebackLine || null,
+      crashRakebackLine: this._crashRakebackLine || null,
       vaultWidget: s.vaultSnap || Vault.get(),
 
       // Marketplace & Inventory (#27)
@@ -2329,6 +2425,7 @@ class App extends React.Component {
             {v.customMsg && (
               <div style={{background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"8px 10px",marginTop:"10px",fontSize:"11.5px",color:"#ffcf9a",fontWeight:700}}>{v.customMsg}</div>
             )}
+            <div style={{fontSize:"8.5px",color:"#8a6a52",fontStyle:"italic",marginTop:"10px",textAlign:"center"}}>{REALITY_STRAP}</div>
           </div>
 
           <button onClick={v.closeIdentity} style={{background:"#ff5a14",border:"none",color:"#2a0e05",fontWeight:800,padding:"10px 18px",borderRadius:"6px",cursor:"pointer",width:"100%"}}>Close (you)</button>
@@ -2405,6 +2502,18 @@ class App extends React.Component {
                     {v.vipChip.label}
                   </div>
                 )}
+                {/* #32: STATUS seated per integration §12.7's final order — the
+                    shared slot directly after the VIP tier chip (EXCLUDED
+                    outranks ON BREAK). The deposit-streak and ⓘ-denominations
+                    chips are unlisted extras and render after the canon run. */}
+                {v.slStatusChip && (
+                  <div title={v.slStatusChip.title} style={{display:"flex",alignItems:"center",gap:"6px",background:"#0e0a06",border:"1px solid "+(v.slStatusChip.returns?"#e24a4a":"#ffd54a"),borderRadius:"6px",padding:"7px 10px",whiteSpace:"nowrap",fontSize:"9.5px",fontWeight:700,color:v.slStatusChip.returns?"#ff8a8a":"#ffd54a"}}>
+                    <span>{v.slStatusChip.label}</span>
+                    {v.slStatusChip.returns && (
+                      <button onClick={v.slReturn} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"8.5px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Return (we kept your seat warm)</button>
+                    )}
+                  </div>
+                )}
                 {v.streakChip && (
                   <div style={{background:"#0e0a06",border:"1px solid #8fd97a",borderRadius:"6px",padding:"7px 10px",fontSize:"9.5px",color:"#8fd97a",whiteSpace:"nowrap"}}>Deposit streak: 1/2 — deposit tomorrow to keep it <span style={{color:"#5a7a4a"}}>(streaks are a fact we made up)</span></div>
                 )}
@@ -2418,14 +2527,6 @@ class App extends React.Component {
                     </div>
                   )}
                 </div>
-                {v.slStatusChip && (
-                  <div title={v.slStatusChip.title} style={{display:"flex",alignItems:"center",gap:"6px",background:"#0e0a06",border:"1px solid "+(v.slStatusChip.returns?"#e24a4a":"#ffd54a"),borderRadius:"6px",padding:"7px 10px",whiteSpace:"nowrap",fontSize:"9.5px",fontWeight:700,color:v.slStatusChip.returns?"#ff8a8a":"#ffd54a"}}>
-                    <span>{v.slStatusChip.label}</span>
-                    {v.slStatusChip.returns && (
-                      <button onClick={v.slReturn} style={{background:"linear-gradient(180deg,#8fd97a,#3a9a2a)",border:"1px solid #cfe4ff",color:"#0e2a06",fontWeight:900,fontSize:"8.5px",padding:"3px 8px",borderRadius:"6px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Return (we kept your seat warm)</button>
-                    )}
-                  </div>
-                )}
                 <div onClick={v.toggleBandMuted} title={v.muteTitle} style={{display:"flex",alignItems:"center",gap:"5px",background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"7px 10px",cursor:"pointer",whiteSpace:"nowrap"}}>
                   <span style={{fontSize:"13px",lineHeight:1}}>{v.bandMuted ? "🔇" : "🔊"}</span>
                   <span style={{fontSize:"8.5px",color:v.bandMuted?"#6a4a38":"#a9705a",lineHeight:1.25,fontStyle:"italic"}}>Mute<br/>(recommended by no one)</span>
@@ -2480,10 +2581,20 @@ class App extends React.Component {
                 {v.isRoulette && (
                   <div>
                     <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Allowance Roulette <span style={{fontSize:"11px",color:"#ffcf9a",fontFamily:"inherit"}}>PROVABLY FAIR™</span></div>
+                    {/* #32: one tagline, one slot (integration §6) — while this tab is
+                        active the streak banner owns DESPERATION_TAGLINE (the ticker's
+                        subtitle is hidden); otherwise the banner is the fake-streak line. */}
+                    {v.rouletteDesperate ? (
+                      <div style={{background:"#3a0a0a",border:"1px solid #e24a4a",borderRadius:"6px",padding:"6px 10px",marginBottom:"10px",fontSize:"11.5px",color:"#ff8a8a",fontWeight:700,fontStyle:"italic"}}>
+                        {DESPERATION_TAGLINE}
+                        <div style={{fontSize:"8px",opacity:0.4,fontWeight:400,marginTop:"2px",fontStyle:"normal"}}>{v.rouletteDesperateFootnote}</div>
+                      </div>
+                    ) : (
                     <div style={{background:"#3a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"6px 10px",marginBottom:"10px",fontSize:"11px",color:"#ffcf9a",fontWeight:700}}>
                       🔥 {v.rouletteBannerNames[0]} won big* — Last 7 spinners won big*
                       <div style={{fontSize:"8px",opacity:0.4,fontWeight:400,marginTop:"2px"}}>* "won big" measured in estimated value, not withdrawable value. Withdrawable value of all winnings is $0.00 (see ToS §1.3).</div>
                     </div>
+                    )}
                     {/* #31: the ONE Rakeback Vault — the roulette tab's widget is the featured
                         display (integration §8); the same shared number renders on every receipt */}
                     <div style={{background:"#0e0a06",border:"1px solid #7a5a2a",borderRadius:"6px",padding:"8px 12px",marginBottom:"10px"}}>
@@ -2535,7 +2646,10 @@ class App extends React.Component {
                             <button onClick={v.rouletteKeepSpinning} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"7px",cursor:"pointer",animation:"topUpGlow 1.6s infinite"}}>Keep Spinning (recommended)</button>
                           </div>
                         ) : (
-                          <div style={{fontSize:"11px",color:"#e8c9ac"}}>Withdrawal request received. Status: Pending (ToS §1.3). Estimated processing: eventually.</div>
+                          <div style={{fontSize:"11px",color:"#e8c9ac"}}>
+                            <div>Withdrawal request received. Status: Pending (ToS §1.3). Estimated processing: eventually.</div>
+                            <div style={{fontSize:"8px",color:"#8a6a52",fontStyle:"italic",marginTop:"4px"}}>{REALITY_STRAP}</div>
+                          </div>
                         )}
                       </div>
                     )}
@@ -2601,7 +2715,7 @@ class App extends React.Component {
                         <div style={{width:"70px",height:"70px",borderRadius:"50%",background:"linear-gradient(160deg,#ffd54a,#c9960a)",border:"3px solid #fff2c9",transformStyle:"preserve-3d",animation:v.coinAnim}}></div>
                       </div>
                       <div style={{textAlign:"center"}}>
-                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>Admin_TradeBot_69 [BOT]</div>
+                        <div style={{fontSize:"12px",color:"#a9705a",marginBottom:"6px"}}>AdminTradeBot_69 [BOT]</div>
                         <div style={{width:"64px",height:"64px",margin:"0 auto",borderRadius:"50%",background:"linear-gradient(160deg,#e24a4a,#a82a2a)",border:"3px solid #ffcfcf"}}></div>
                       </div>
                     </div>
@@ -2639,7 +2753,7 @@ class App extends React.Component {
 {"SKIN COINFLIP — FLIP RECEIPT\n"}
 {v.coinReceipt.lines.map(l=>l.label+" .... "+l.amount.toFixed(1)+" BB\n").join("")}
 {"TOTAL .... "+v.coinReceipt.total.toFixed(1)+" BB\n"}
-{Vault.receiptLine()+"\n"}
+{v.coinVaultLine+"\n"}
 {"Thank you for flipping. Mom says hi."}
                           </pre>
                         )}
@@ -2716,8 +2830,8 @@ class App extends React.Component {
                 {v.isCrates && (
                   <div>
                     <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Loot Crate Defuser</div>
-                    <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"4px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes. <span style={{fontSize:"8px"}}>(Full table available on request. Requests are mood-dependent.)</span></div>
-                    <div style={{fontSize:"8.5px",color:"#6a4a38",marginBottom:"12px"}}>{v.cratePityFinePrint}</div>
+                    <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"4px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes. {v.crateOddsNote} <span style={{fontSize:"8px"}}>(Full table available on request. Requests are mood-dependent.)</span></div>
+                    <div style={{fontSize:"8.5px",color:"#6a4a38",marginBottom:"12px"}}>{v.cratePityFinePrint} · {v.crateOddsFinePrint}</div>
 
                     {v.crateEnvelope && v.crateEnvelope.kind==="consolation" && (
                       <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
@@ -2864,7 +2978,7 @@ class App extends React.Component {
 
           <div style={{borderTop:"2px solid #3a1206",background:"#120802",padding:"20px 26px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:"24px"}}>
             {v.showChat && (
-              <ChatPanel panicActive={v.panicActive} hooks={v.chatHooks} />
+              <ChatPanel panicActive={v.panicActive} hooks={v.chatHooks} gameFeed={v.gameFeed} />
             )}
             <div>
               <div style={{display:"flex",gap:"10px",flexWrap:"wrap",marginBottom:"10px"}}>
@@ -3069,6 +3183,7 @@ class App extends React.Component {
                     <span style={{color:"#e8a52a",fontStyle:"italic",whiteSpace:"nowrap"}}>{c.status}</span>
                   </div>
                 ))}
+                <div style={{fontSize:"8.5px",color:"#8a6a52",fontStyle:"italic",marginTop:"6px"}}>{REALITY_STRAP}</div>
               </div>
 
               <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#cf6a32",letterSpacing:"1px",margin:"0 0 8px"}}>TRADE-UP CONTRACT (PATENT PENDING, OUTCOME PENDING)</div>
@@ -3226,6 +3341,9 @@ class App extends React.Component {
                   <button onClick={v.closeInvDetail} style={{background:"none",border:"none",color:"#a9705a",fontSize:"10.5px",cursor:"pointer",textDecoration:"underline",padding:0,marginLeft:"auto"}}>close</button>
                 </div>
                 {e.itemClass!=="digital-asset" && <div style={{fontSize:"8.5px",color:"#6a4a38",marginTop:"6px"}}>{v.instantSellSub}</div>}
+                {/* #32 §12.4 audit: Instant Sell™ is the money-adjacent action on
+                    this modal — the strap rides under it (one confession per modal) */}
+                <div style={{fontSize:"8.5px",color:"#8a6a52",fontStyle:"italic",marginTop:"6px"}}>{REALITY_STRAP}</div>
                 {v.marketAskFor===e.id && (
                   <div style={{marginTop:"10px",background:"#0e0a06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"10px 12px"}}>
                     <div style={{fontSize:"10px",color:"#a9705a",marginBottom:"6px"}}>Asking price (BB). On save: Listing Fee 5 BB + Maternal Gratuity 1 BB (non-refundable). Buyer Protection 7.3% is deducted from proceeds later.</div>
@@ -3258,6 +3376,7 @@ class App extends React.Component {
                   <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px dashed #5a4232",marginTop:"4px",paddingTop:"4px",color:"#ffb347",fontWeight:900}}><span>TOTAL</span><span>{q.total} BB</span></div>
                 </div>
                 <div style={{fontSize:"9px",color:"#8a6a52",fontStyle:"italic",margin:"10px 0",lineHeight:1.5}}>{MARKET_OC_NOTICE} Item arrives immediately, stamped: {TRADE_HOLD_LABEL}. Purchases are decorative (§1) — only fake-won items can ever be sold or contracted.</div>
+                <div style={{fontSize:"9px",color:"#8a6a52",fontStyle:"italic",margin:"0 0 10px",lineHeight:1.5,textAlign:"center"}}>{REALITY_STRAP}</div>
                 <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
                   <button onClick={()=>v.marketConfirmPurchase(it.id)} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 16px",borderRadius:"8px",cursor:"pointer"}}>Complete Purchase — {q.total} BB</button>
                   <button onClick={v.marketCloseCheckout} style={{background:"#3a2010",border:"1px dashed #7a5a2a",color:"#a9705a",fontWeight:700,fontSize:"12px",padding:"11px 14px",borderRadius:"8px",cursor:"pointer"}}>Keep browsing</button>

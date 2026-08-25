@@ -342,6 +342,27 @@ const CUES = {
     pluck(ctx, houseBus, { t: t + 0.08, freq: 1975, gain: 0.022 * v, dur: 0.6 });
     tone(ctx, houseBus, { t: t + 0.02, f0: 340, f1: 300, glide: 0.35, gain: 0.018 * v, attack: 0.1, decay: 0.4, lp: 900 });
   } },
+  // #32 (audio-gags §3, the chat micro-texture #26/#30 left unwired):
+  "chat.tap": { dur: 0.35, make(t, v) { // crowd taps: quiet typewriter taps, persona-typed (hype kids slightly louder — the caller scales v)
+    for (let i = 0; i < 3; i++) {
+      click(ctx, layers[3], { t: t + i * 0.07 + Math.random() * 0.02, f0: 2100 + Math.random() * 700, gain: (0.02 + Math.random() * 0.012) * v });
+    }
+  } },
+  "chat.botbeep": { dur: 0.3, make(t, v) { // definitely-bots get a flat monotone beep. Bots beep. This is disclosure.
+    tone(ctx, layers[3], { t, f0: 620, gain: 0.028 * v, attack: 0.004, hold: 0.12, decay: 0.05 });
+    tone(ctx, layers[3], { t: t + 0.16, f0: 620, gain: 0.024 * v, attack: 0.004, hold: 0.08, decay: 0.05 });
+  } },
+  "chat.who": { dur: 0.4, make(t, v) { // the quiet window's flat beep ("who?") — the loudest thing on the site, said once
+    tone(ctx, layers[3], { t, f0: 880, gain: 0.05 * v, attack: 0.004, hold: 0.22, decay: 0.08 });
+  } },
+  "chat.thud": { dur: 0.5, make(t, v) { // timeout: one muffled ban-hammer. Modesty is a mixing choice.
+    tone(ctx, layers[3], { t, f0: 120, f1: 55, glide: 0.12, gain: 0.1 * v, attack: 0.004, decay: 0.22, lp: 320 });
+    noise(ctx, layers[3], { t, gain: 0.03 * v, attack: 0.002, decay: 0.18, lp: 500 });
+  } },
+  "rain.drip": { dur: 0.5, make(t, v) { // #32 (audio-gags §3): each rain persona's 1 BB drips as a tiny coin-drip. Your chip gets no drip.
+    tone(ctx, layers[3], { t, f0: 1450, f1: 880, glide: 0.08, gain: 0.03 * v, attack: 0.003, decay: 0.12, lp: 2600 });
+    click(ctx, layers[3], { t: t + 0.16, f0: 1200, gain: 0.014 * v });
+  } },
   // Ask-Mom (§18.1: the most professionally mixed surface on the site)
   "askmom.beat": { dur: 0.7, make(t, v) { // soft footsteps
     tone(ctx, layers[1], { t, f0: 92, f1: 68, glide: 0.09, gain: 0.07 * v, attack: 0.004, decay: 0.1, lp: 350 });

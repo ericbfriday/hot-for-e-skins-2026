@@ -27,7 +27,7 @@ const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-wi
 
 function playerTag() { return Identity.playerTag() || "you"; }
 
-export default function ChatPanel({ panicActive = false, hooks = {} }) {
+export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = [] }) {
   const [entries, setEntries] = useState([]);
   const [online, setOnline] = useState(POPULATION);
   const [inputText, setInputText] = useState("");
@@ -52,6 +52,10 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
   const timersRef = useRef([]);
   const ambientTimerRef = useRef(null);
   const mikeOpenedThisSessionRef = useRef(false);
+  const rainTimerRef = useRef(null);       // #32: the ~20-min rain clock (chat §11)
+  const rainUntilRef = useRef(0);          // eligibility window ("if you interact")
+  const rainEligSaidRef = useRef(false);
+  const seenGameIdsRef = useRef(new Set()); // #32: gameFeed bridge drain state
 
   const nextId = useCallback(() => { idRef.current += 1; return idRef.current; }, []);
 
@@ -80,6 +84,14 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
 
   const pushAmbientLine = useCallback((text, archetypeOverride) => {
     const archetype = archetypeOverride || pickArchetype();
+    // #32 (audio-gags §3): the crowd types — quiet typewriter taps, persona-typed
+    // (hype kids slightly louder), and definitely-bots get the flat monotone
+    // beep. Bots beep. This is disclosure.
+    if (archetype.key === "bot") {
+      HouseBand.play("chat.botbeep", { priority: BAND_PRIORITIES.P3_SOCIAL });
+    } else {
+      HouseBand.play("chat.tap", { priority: BAND_PRIORITIES.P3_SOCIAL, volume: archetype.key === "hype" ? 1.35 : 1 });
+    }
     if (archetype.isWhale) {
       return pushEntry({ user: WHALE_NAME, color: "#e8c9ac", msg: text });
     }
@@ -128,6 +140,8 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
     addTimer(() => {
       const line = QUIET_WINDOW_LINES[Math.floor(Math.random() * QUIET_WINDOW_LINES.length)];
       pushAmbientLine(line);
+      // #32: one flat beep with the "who?" — the loudest thing on the site, said once.
+      HouseBand.play("chat.who", { priority: BAND_PRIORITIES.P3_SOCIAL });
     }, dur + 200);
   }, [addTimer, pushAmbientLine]);
 
@@ -142,6 +156,8 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
     if (timeoutUntil && Date.now() < timeoutUntil) return;
     setTimeoutUntil(Date.now() + TIMEOUT_DURATION_MS);
     setTimeoutReason(TIMEOUT_REASONS[reasonKey] || reasonKey);
+    // #32 (audio-gags §3): one muffled ban-hammer. Modesty is a mixing choice.
+    HouseBand.play("chat.thud", { priority: BAND_PRIORITIES.P3_SOCIAL });
     const line = TIMEOUT_AMBIENT_LINES[Math.floor(Math.random() * TIMEOUT_AMBIENT_LINES.length)];
     addTimer(() => pushAmbientLine(line), 400);
   }, [addTimer, pushAmbientLine, timeoutUntil]);
@@ -229,6 +245,12 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
     }
     const trimmed = String(text || "").slice(0, 100);
     if (!trimmed) return;
+    // #32 (chat §11): interacting during a rain event states your eligibility,
+    // once per event — 0.0s of it (rounded down, §8.9; your region: no).
+    if (now < rainUntilRef.current && !rainEligSaidRef.current) {
+      rainEligSaidRef.current = true;
+      pushEntry({ system: true, msg: "You were eligible for 0.0s of rain (rounded down, §8.9)." });
+    }
     const wasWithinWindow = lastSentAtRef.current && now - lastSentAtRef.current < RATE_LIMIT_WINDOW_MS;
     lastSentAtRef.current = now;
 
@@ -374,7 +396,8 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
       addTimer(() => pushAmbientLine("where'd " + tag + " go"), 300);
       addTimer(() => pushAmbientLine("he bolted lol"), 900);
       addTimer(() => pushCast("MOD_Chad_Official", "leaving is a §7.1 concept"), 1500);
-      addTimer(() => pushEntry({ user: "PROVABLY_MOM", color: "#e8c9ac", msg: "I can see the homework from here. Deposit responsibly." }), 2100);
+      // PROVABLY_MOM's rung-3 line arrives via the gameFeed bridge (App posts it
+      // gated on the suspicion ladder, panic §3) — no unconditional twin here.
     }));
 
     // #29 self-limit: chat reactions per the spec §6 table + §5 milestone leaks
@@ -443,14 +466,45 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
     // #31: Mom Weather™ — the thunder rides the Band's armed cue (momweather.event);
     // the room sees the [BOT] line, rain falls on the lapsed, and the covered
     // get an umbrella over their chip.
+    // #32: the line renders the recipients count (POPULATION − you-if-covered) —
+    // the crowd is always 847 big; one is you.
     offs.push(Bus.on(EVENTS.MOMWEATHER_EVENT, (p) => {
       const covered = !!(p && p.covered);
-      pushCast("AdminTradeBot_69", (covered ? RETENTION_COPY.momWeatherCovered : RETENTION_COPY.momWeatherSoaked).replace("{tag}", playerTag()));
+      const n = Number.isFinite(p && p.recipients) ? p.recipients : POPULATION;
+      pushCast("AdminTradeBot_69", (covered ? RETENTION_COPY.momWeatherCovered : RETENTION_COPY.momWeatherSoaked)
+        .replace("{n}", String(n))
+        .replace("{tag}", playerTag()));
       setRainFx({ key: Date.now() });
       addTimer(() => setRainFx(null), 4200);
       if (covered) setUmbrellaUntil(Date.now() + 40000);
       if (!covered) addTimer(() => pushAmbientLine("ty MOM!!"), 1400);
     }));
+
+    // #32 (chat §11, closing #26's deviation 5): Rain — region-locked forever.
+    // The first event is deterministic from the daily seed (~20 min in); 5 BB
+    // rains on 3–5 named ambient personas who thank the house; you were
+    // eligible for 0.0s of it. rain.event carries the thunder (audio-gags §3).
+    const scheduleRain = () => {
+      const seed = Mood.seed();
+      const firstMs = (20 + (seed % 5)) * 60000; // deterministic per day
+      const runRain = () => {
+        const count = 3 + ((seed >> 3) % 3);
+        pushEntry({ system: true, highlight: true, msg: "🌧️ RAIN INCOMING" });
+        Bus.emit(EVENTS.RAIN_EVENT, { recipients: count, bb: 5 });
+        for (let i = 0; i < count; i++) {
+          addTimer(() => {
+            const name = personaRef.current.nameFor(["hype", "shill", "newmark"][i % 3]);
+            pushEntry({ user: name, color: "#e8c9ac", msg: i === count - 1 ? "ty admin!!" : "ty house!!" });
+            HouseBand.play("rain.drip", { priority: BAND_PRIORITIES.P3_SOCIAL, volume: 0.6 }); // each persona's 1 BB drips. Yours doesn't.
+          }, 1200 + i * 1700);
+        }
+        rainUntilRef.current = Date.now() + 90000; // eligibility window: "if you interact"
+        rainEligSaidRef.current = false;
+        rainTimerRef.current = setTimeout(runRain, (19 + Math.random() * 3) * 60000); // ~every 20 min
+      };
+      rainTimerRef.current = setTimeout(runRain, firstMs);
+    };
+    scheduleRain();
 
     scheduleAmbient();
     const tickInt = setInterval(() => setTick((n) => n + 1), 5000);
@@ -460,10 +514,25 @@ export default function ChatPanel({ panicActive = false, hooks = {} }) {
       clearTimeout(ambientTimerRef.current);
       clearInterval(askMomPileTimerRef.current);
       clearInterval(tickInt);
+      clearTimeout(rainTimerRef.current);
       timersRef.current.forEach(clearTimeout);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // #32: the gameFeed bridge — game-side lines (crash stick chatter, bot
+  // taunts, MOD beats, the 60s idle MOM whisper) are written by App with an
+  // _id stamp; drain the unseen ones into the real feed, newest last.
+  useEffect(() => {
+    const seen = seenGameIdsRef.current;
+    for (let i = gameFeed.length - 1; i >= 0; i--) {
+      const g = gameFeed[i];
+      if (!g || !g._id || seen.has(g._id)) continue;
+      seen.add(g._id);
+      if (g.whisper) HouseBand.play("mom.whisper", { priority: BAND_PRIORITIES.P3_SOCIAL });
+      pushEntry({ user: g.user, badge: g.badge, color: g.color, msg: g.msg, whisper: !!g.whisper, pinned: !!g.pinned });
+    }
+  }, [gameFeed, pushEntry]);
 
   const now = Date.now();
   const flicker = Math.round(Math.sin(now / 5000) * 3);

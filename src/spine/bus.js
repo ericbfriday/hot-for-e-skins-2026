@@ -1,5 +1,3 @@
-import { DESPERATION_THRESHOLD_BB } from "./constants.js";
-
 export const EVENTS = {
   GATE_ACCEPTED: "gate.accepted",
   SESSION_STARTED: "session.started",
@@ -59,12 +57,13 @@ function transition(to) {
   return currentRegime;
 }
 
+// #32 sweep: Regime.evaluate() (the #20 interim rules engine) is deleted —
+// nothing has called it since #25 moved regime ownership to the ticker
+// (controller.js calls Regime.set() only). The spine stores the truth; the
+// ticker owns the rules (integration §6). Do not reintroduce an evaluate()
+// call anywhere — that way lies three watchers.
 export const Regime = {
   current: () => currentRegime,
-  evaluate(balanceBB) {
-    const desperate = typeof balanceBB === "number" && Number.isFinite(balanceBB) && balanceBB < DESPERATION_THRESHOLD_BB;
-    return transition(desperate ? "desperation" : "normal");
-  },
   set(to) {
     return transition(to);
   },

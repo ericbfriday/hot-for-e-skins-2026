@@ -344,9 +344,15 @@ export function playerLineForSettled(p, tag) {
       if (p.kind === "nibble") return { ...you, text: "broke even. A crowd gathered." };
       return { ...bot, text: "takes " + tag + " to school. Tie goes to the server host." };
     case "crash":
-      if (p.kind === "crash-run" || p.kind === "character-win") {
+      if (p.kind === "character-win") {
         const net = Number.isFinite(p.netBB) ? Math.abs(p.netBB) : 1;
         return { ...you, text: "DEFEATED THE HOUSE (net: +" + net + " BB, house retains dignity)", flourish: true, accent: rarityFor(item, p.kind) };
+      }
+      // #32: round.settled carries the multiplier on crash settles, so the
+      // ticker cites the exact scheduled crash (0.00x is a mood, not a typo).
+      if (p.kind === "crash-run") {
+        const mult = Number.isFinite(p.mult) ? p.mult.toFixed(2) : "1.01";
+        return { ...you, text: "crashed the College Fund at " + mult + "x (as scheduled)" };
       }
       return { ...you, text: "crashed the College Fund (as scheduled)" };
     case "crates":
