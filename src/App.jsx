@@ -1,26 +1,26 @@
 import React from 'react'
 import { Mood } from "./spine/mood.js";
-import { Bus, EVENTS, Regime } from "./spine/bus.js";
+import { Bus, EVENTS } from "./spine/bus.js";
 import { Vault } from "./spine/vault.js";
 import { HouseBand, BAND_PRIORITIES } from "./spine/band.js";
-import { Identity, generateTag, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
+import { Identity, complianceFilter, YOU_COLOR, CUSTOM_NAME_PRICE_OC } from "./spine/identity.js";
 import { Consent } from "./spine/consent.js";
 import AskMomFlow from "./askmom/AskMomFlow.jsx";
 import ChatPanel from "./chat/ChatPanel.jsx";
+import TickerPanel from "./ticker/TickerPanel.jsx";
+import { Ticker } from "./ticker/controller.js";
 import {
   loadOC, saveOC, loadBonus, saveBonus, clearBonus, loadDepositStats, noteChaseAttempt,
 } from "./askmom/session.js";
 import {
   GAME_PRICES_BB, MATERNAL_STARTER_GRANT_BB, DESPERATION_THRESHOLD_BB,
-  V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE, REFILL_PACKAGES,
+  V_GEMS_PER_BB, SKINCOINZ_PER_BB, LEGACY_TO_WHOLE_BB_SCALE,
   NAG_LOW_BB_COPY, INSUFFICIENT_FUNDS_COPY, INSUFFICIENT_FUNDS_ESCALATION_COPY
 } from "./spine/constants.js";
 import { Inventory } from "./games/inventory.js";
 import { pseudoHash12 } from "./games/fairness.js";
 import * as Roulette from "./games/roulette.js";
 import * as Coinflip from "./games/coinflip.js";
-
-const PKG_NAME = Object.fromEntries(REFILL_PACKAGES.map((p) => [p.id, p.name]));
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -29,17 +29,6 @@ const SKIN_IMAGES = Object.fromEntries(
   ])
 );
 
-const WIN_TEMPLATES = [
-  "{n} just won a Karambit worth $12,000 (screenshot not available)",
-  "{n} deposited their lunch money and feels GREAT about it",
-  "{n} hit a 47x multiplier (server logs unavailable)",
-  "{n} traded up to Covert Extravagance tier (verification pending)",
-  "{n} cashed out $0.00 successfully",
-  "{n} unlocked a crate and received emotional damage",
-  "{n} is now VIP Bronze Tier 7 (spent $340 this week)",
-  "{n} defeated the house (this has never happened)",
-  "Server admin recalculated {n}'s balance based on mood"
-];
 const RARITY_COLORS = {"Covert Extravagance":"#ff4444","Consumer Grade Trash":"#8a8a8a","Contraband Liability":"#e0a800","Mil-Spec Regret":"#4a90e2","Classified Overdraft":"#a24ae2","Industrial Denial":"#4aa8c9"};
 const CATALOG = [
   {id:"skin_01",name:"Tactical Plastic Spork | Minimal Debt",rarity:"Covert Extravagance",statTrak:true,statMetric:"Unpaid Chores: 47",estimatedValue:"$1,420.69",flavorText:"Engineered for maximum cafeteria lunch trade value."},
@@ -181,7 +170,6 @@ class App extends React.Component {
     activeTab:"roulette", balanceBB:MATERNAL_STARTER_GRANT_BB, insufficientMsg:null, sessionSpendFailures:0,
     moodWord:null, denomsOpen:false,
     balanceOC:0, bonusOC:null, askmom:null, toasts:[], ocFly:null, cooldown:null, streakChip:null, abandonedCount:0,
-    ticker:[],
     rouletteSpinning:false, rouletteOffset:0, rouletteTransition:"none", rouletteResult:null,
     rouletteInsured:true, rouletteTurbo:false, rouletteTurboUnlocked:false,
     rouletteStreak:0, rouletteNearMissBackToBack:false, rouletteConsolationMsg:null,
@@ -266,17 +254,11 @@ class App extends React.Component {
     this._offIdent = Identity.subscribe(({identity, stats})=>this.setState({ident:identity, stats}));
     Mood.init();
     this._offDeposit = Bus.on(EVENTS.DEPOSIT_COMPLETED, (p)=>{
-      const name = PKG_NAME[p.packageId] || "a package";
-      this.pushTicker("You asked Mom. Mom said yes (she wasn't in the room)");
-      this.pushTicker("You redeemed the "+name+". Chores pending.");
       if (p.firstEver) {
-        this.pushTicker("MOMCODE_MIKE [OWNER] just 47x'd Mom's Visa — you're next (code MOM)");
         this.toast("Turbo Spin unlocked. It never re-locks. Premium is a scar.");
         this.setState({rouletteTurboUnlocked:true});
       }
       if (p.packageId === "moms-max") {
-        this.pushTicker("Mom's Max purchased by You. This is the last time (§10.3).");
-        this.pushTicker("MOMCODE_MIKE [OWNER]: You went Max. Respect. (code MOM)");
         this.toast("VIP TIER: MOM'S FAVORITE (full). It unlocks nothing. The house appreciates you.");
       }
       this.setState({streakChip: loadDepositStats().streak});
@@ -294,8 +276,8 @@ class App extends React.Component {
         this.toast("MOM (1 missed call) — she senses opportunity", {actionLabel:"+ Top Up", onAction:()=>this.openAskMom({source:"nag"})});
       }
     }, 5000);
-    Bus.emit(EVENTS.SESSION_STARTED, {returning});
-    Regime.evaluate(balance);
+    Ticker.init({ balanceBB: balance });
+    Bus.emit(EVENTS.SESSION_STARTED, {returning, balanceBB: balance});
     this._tosTick = setInterval(()=>{
       if (!this.state.tosOpen) { this._tosElapsed = 0; this._tosNoticeFired = false; return; }
       if (this._tosNoticeFired) return;
@@ -307,23 +289,11 @@ class App extends React.Component {
         this.toast(TOS_EDIT_NOTICE, {dismissLabel:"Acknowledged (both versions)."});
       }
     }, 1000);
-    this.scheduleTicker();
   }
 
   saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
 
-  scheduleTicker(){
-    const delay = 2000 + Math.random()*2000;
-    this._tTimer = setTimeout(()=>{
-      const tag = generateTag({avoid:this._recentNames || []});
-      this._recentNames = [tag, ...(this._recentNames || [])].slice(0,8);
-      const t = WIN_TEMPLATES[Math.floor(Math.random()*WIN_TEMPLATES.length)].replace("{n}", tag);
-      this.setState(s=>({ticker:[t, ...s.ticker].slice(0,8)}));
-      this.scheduleTicker();
-    }, delay);
-  }
   componentWillUnmount(){
-    clearTimeout(this._tTimer);
     clearInterval(this._crashInt); clearInterval(this._crateInt);
     clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
     clearTimeout(this._rouletteSpinTimer); clearTimeout(this._coinFlipTimer);
@@ -407,11 +377,9 @@ class App extends React.Component {
     try{ localStorage.setItem("hfes_tos", JSON.stringify({acceptedOnce:true})); }catch(e){}
     const firstFlow = this.state.flowPhase==="tos";
     if (firstFlow) {
-      const tag = Identity.playerTag();
-      this.setState(s=>({
+      this.setState({
         flowPhase:"done", tosOpen:false, tosConsent:false, tosNeedsConsent:false, tosAcceptedEver:true,
-        ticker:[tag+" joined. The house has been expecting you.", ...s.ticker].slice(0,8),
-      }));
+      });
       this.toast(GRANT_TOAST);
     } else {
       this.setState({tosOpen:false, tosConsent:false, tosNeedsConsent:false, tosAcceptedEver:true});
@@ -467,7 +435,18 @@ class App extends React.Component {
     this.setState({customInput:"", customMsg:"Compliance Filter (mood: "+res.moodWord+") applied. Non-refundable."});
   }
 
-  togglePanic(){ this.setState(s=>({panicActive:!s.panicActive})); }
+  togglePanic(){
+    const wasActive = this.state.panicActive;
+    this.setState(s=>({panicActive:!s.panicActive}));
+    if (!wasActive) {
+      this._panicPresses = (this._panicPresses || 0) + 1;
+      this._panicHiddenAt = Date.now();
+      Bus.emit(EVENTS.PANIC_HIDDEN, {pressesToday: this._panicPresses});
+    } else {
+      const hiddenMs = this._panicHiddenAt ? Date.now() - this._panicHiddenAt : 0;
+      Bus.emit(EVENTS.PANIC_REVEALED, {hiddenMs, missed: Ticker.snapshot().hiddenCount});
+    }
+  }
 
   flashInsufficient(failures){
     this.setState({insufficientMsg: failures >= 3 ? INSUFFICIENT_FUNDS_ESCALATION_COPY : INSUFFICIENT_FUNDS_COPY});
@@ -485,8 +464,7 @@ class App extends React.Component {
     }
     const nb = this.state.balanceBB - amount;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
-    Bus.emit(EVENTS.BB_SPENT, {amount, reason});
-    Regime.evaluate(nb);
+    Bus.emit(EVENTS.BB_SPENT, {amount, reason, balanceBB: nb});
     return true;
   }
   spendBB(surface){ return this.payBB(GAME_PRICES_BB[surface], surface); }
@@ -495,8 +473,7 @@ class App extends React.Component {
     if (!(this.state.balanceBB >= amount)) return {waived:true};
     const nb = this.state.balanceBB - amount;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
-    Bus.emit(EVENTS.BB_SPENT, {amount, reason:"chat-gratuity"});
-    Regime.evaluate(nb);
+    Bus.emit(EVENTS.BB_SPENT, {amount, reason:"chat-gratuity", balanceBB: nb});
     return {waived:false, amount};
   }
 
@@ -617,8 +594,6 @@ class App extends React.Component {
     }));
 
     this.settleRound("roulette", roundId, kind, {priceBB:price, netBB, itemAward, nearMissItem, surfaceStreak:streak});
-    const tLine = Roulette.tickerLineForOutcome(kind, tag, item);
-    if (tLine) this.pushTicker(tLine);
     if (consolation) {
       if (consolation.kind === "badge") this.pushTicker(tag+" earned the Consistent! badge (losses: 7)");
       if (consolation.kind === "apology") this.pushTicker(tag+" received a formal apology (fee: 1 BB)");
@@ -728,8 +703,6 @@ class App extends React.Component {
     }));
 
     this.settleRound("coinflip", roundId, kind, {priceBB:price, netBB, itemAward, surfaceStreak:streak});
-    const tLine = Coinflip.tickerLineForOutcome(kind, tag, item);
-    if (tLine) this.pushTicker(tLine);
     if (taunt) this.setState(s=>({chat:[{user:"Admin_TradeBot_69", msg:taunt.replace("Admin_TradeBot_69: ",""), color:"#e24a4a"}, ...s.chat].slice(0,6)}));
     if (botPity) {
       this.creditBB(1);
@@ -773,7 +746,6 @@ class App extends React.Component {
       const finalMult = Math.random() < 0.5 ? 0.00 : 1.01;
       this.setState({crashRunning:false, crashCrashed:true, crashMult:finalMult, crashResult:"CRASHED at "+finalMult.toFixed(2)+"x. Cash-out was evaded "+this.state.cashoutDodge+" time(s)."});
       this.settleRound("crash", roundId, "house-win");
-      this.setState(s=>({ticker:["The College Fund crashed at "+finalMult.toFixed(2)+"x (as scheduled)", ...s.ticker].slice(0,8)}));
     }, stopAt);
   }
   dodgeCashout(){
@@ -807,7 +779,6 @@ class App extends React.Component {
       const a = awards[Math.floor(Math.random()*awards.length)];
       this.setState({crateOpening:false, crateProgress:100, crateResult:"Crate defused. You received: "+a, crateKeyBought:false});
       this.settleRound("crates", this._crateRound, "key-defused");
-      this.setState(s=>({ticker:["A crate was opened. A JPEG was awarded. Nobody won.", ...s.ticker].slice(0,8)}));
     }, total);
   }
 
@@ -832,8 +803,7 @@ class App extends React.Component {
   creditBB(amount){
     const nb = this.state.balanceBB + amount;
     this.setState({balanceBB:nb}); this.saveBalance(nb);
-    Bus.emit(EVENTS.BB_CREDITED, {amount, reason:"askmom-conversion"});
-    Regime.evaluate(nb);
+    Bus.emit(EVENTS.BB_CREDITED, {amount, reason:"askmom-conversion", balanceBB: nb});
     const surface = this.pendingReplay;
     if (surface && nb >= GAME_PRICES_BB[surface]) {
       this.pendingReplay = null;
@@ -868,7 +838,7 @@ class App extends React.Component {
     this.setState(s=>({toasts:s.toasts.filter(t=>t.id!==id)}));
   }
   pushTicker(line){
-    this.setState(s=>({ticker:[line, ...s.ticker].slice(0,8)}));
+    Ticker.emitTicker({ text: line, isYou: true });
   }
   cooldownStart(){
     clearInterval(this._coolInt);
@@ -970,7 +940,6 @@ class App extends React.Component {
       replayCrates: s.crateResult && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
-      ticker:s.ticker,
       chatHooks: { gratuity:(n)=>this.chatGratuity(n) },
       activeTab:s.activeTab, tabBg, tabColor,
       isRoulette: s.activeTab==="roulette", isCoinflip: s.activeTab==="coinflip", isCrash: s.activeTab==="crash", isCrates: s.activeTab==="crates",
@@ -1307,15 +1276,7 @@ class App extends React.Component {
 
           <div style={{display:"grid",gridTemplateColumns:"250px 1fr",gap:0,alignItems:"start"}}>
             {v.showTicker && (
-              <div style={{borderRight:"2px solid #3a1206",padding:"14px",minHeight:"520px",background:"#170a05"}}>
-                <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"10px"}}>
-                  <div style={{width:"8px",height:"8px",borderRadius:"50%",background:"#ff3030",animation:"blink 1s infinite"}}></div>
-                  <div style={{fontFamily:"'Bangers',cursive",color:"#ff8a3d",fontSize:"14px",letterSpacing:"1px"}}>LIVE WINS</div>
-                </div>
-                {v.ticker.map((t,i)=>(
-                  <div key={i} style={{background:"#241005",border:"1px solid #3a1a0a",borderRadius:"5px",padding:"8px 10px",marginBottom:"7px",fontSize:"11.5px",color:"#e8c9ac",lineHeight:1.4}}>{t}</div>
-                ))}
-              </div>
+              <TickerPanel activeTab={v.activeTab} />
             )}
 
             <div style={{padding:"22px 26px"}}>
