@@ -373,14 +373,10 @@ export function winnersToday(seed, now = new Date()) {
   return k * 1000 + 847;
 }
 
-// MARKET (HFES-10) index — STUB for #27 (marketplace).
-// #27: replace this deterministic pseudo-walk with the real composite
-// (mean of currentEst/baselineEst across the ten catalog skins, marketplace §10).
-// The displayed index is the running max, so it has never gone down.
-export function marketIndexRaw(seed, tickIndex) {
-  const h = hashString(seed + "#hfes10#" + tickIndex);
-  return 1000 + ((h % 8911) / 100) + (tickIndex % 97) * 0.11;
-}
+// MARKET (HFES-10) index: the #25 pseudo-walk stub was replaced by #27 with the
+// real composite (marketplace §10) — hfes10() in src/games/marketplace.js, the
+// mean of currentEst/baselineEst across the ten catalog skins, indexed from
+// 1,000.00. The controller renders the running max, so it has never gone down.
 
 // Panic §6 missed-summary fabrication: from seed + elapsed time. If nothing
 // missed beats it, it may still say Karambit — the feed is fiction either way.

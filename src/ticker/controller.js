@@ -7,6 +7,7 @@ import { Identity, RESERVED_CAST, YOU_COLOR } from "../spine/identity.js";
 import { DESPERATION_THRESHOLD_BB } from "../spine/constants.js";
 import * as E from "./engine.js";
 import { createMikeController } from "./mike.js";
+import { hfes10, HFES10_FOOTNOTE } from "../games/marketplace.js";
 
 const CAST = Object.fromEntries(RESERVED_CAST.map((c) => [c.name, c]));
 const GRACE_COOLDOWN_MS = 60000; // integration §9: one owner (ticker), 60s cooldown, last-wins
@@ -155,11 +156,12 @@ function graceLine(force) {
   addEntry({ text: E.bindName(E.LINES.grace, { n: playerTag() }), name: playerTag(), color: YOU_COLOR, isYou: true });
 }
 
-// ---- MARKET (HFES-10) stub + winners counter (§10) ----------------------------
+// ---- MARKET (HFES-10) + winners counter (§10) ----------------------------------
+// #27: the real composite (mean of currentEst/baselineEst across the ten
+// catalog skins, indexed from 1,000.00). The displayed index is the running
+// max, so it has never gone down; down-ticks render as display errors (§8.9).
 function marketTick() {
-  const seed = Mood.seed();
-  const tickIndex = Math.floor(Date.now() / 45000);
-  const raw = E.marketIndexRaw(seed, tickIndex);
+  const raw = hfes10();
   marketLastRaw = raw;
   if (raw > marketShown) marketShown = raw;
   notify();
@@ -218,13 +220,14 @@ export const Ticker = {
   },
 
   snapshot() {
-    const shown = marketShown || 1000;
+    const shown = Math.max(1000, marketShown);
     const downTick = marketLastRaw < shown;
     return {
       entries,
       desperate: Regime.current() === "desperation",
       marketLabel: "MARKET (HFES-10): " + shown.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ▲",
       marketDelta: downTick ? "▲ −0.4% (display error, §8.9)" : null, // the index has never gone down
+      marketFootnote: HFES10_FOOTNOTE,
       winnersToday: E.winnersToday(Mood.seed()),
       winnersHover: E.LINES.winnersHover,
       footer: E.LINES.footer,
@@ -356,17 +359,22 @@ Bus.on(EVENTS.PANIC_REVEALED, () => {
   scheduleAmbient();
 });
 
-// ---- dormant listeners (established pattern: safe no-op until an emitter exists)
-// #27 marketplace settlement lines + the rollback system line.
+// ---- marketplace settlement lines (#27 owns this copy; marketplace spec §5–6/§9)
 Bus.on(EVENTS.MARKET_EVENT, (p) => {
   if (!p) return;
   if (p.kind === "rollback") {
+    // §9 verbatim.
     addEntry({ system: true, text: "Scheduled maintenance: 1 (one) item was never yours.", color: E.SYSTEM_COLOR });
-  } else if (p.kind === "sold" || p.kind === "instant-sold") {
-    Ticker.emitTicker({ text: "sold " + (p.item || "an item") + " — settlement: Pending (§6.1)", isYou: true });
-    addEntry(castEntry("AdminTradeBot_69", "acquired " + (p.item || "an item") + " (0.02 BB + exposure)"));
+  } else if (p.kind === "sold") {
+    // §6: listing "sold" at full asking — proceeds credited to Escrow, never BB.
+    Ticker.emitTicker({ text: "sold " + (p.item || "an item") + " — credited to Escrow (converts to withdrawal queue)", isYou: true });
+    addEntry(castEntry("AdminTradeBot_69", "settlement complete. the BB were always conceptual (§6.1)"));
+  } else if (p.kind === "instant-sold") {
+    // §5 receipt family.
+    Ticker.emitTicker({ text: "Instant Sell™: " + (p.item || "an item") + " → " + (p.bb || 1) + " BB. The difference covers administrative realism.", isYou: true });
   } else if (p.kind === "lowball") {
-    Ticker.emitTicker({ text: "received an offer: 0.02 BB + exposure. Final.", isYou: true });
+    // §6: the one offer, ever.
+    Ticker.emitTicker({ text: "received an offer: 0.02 BB + exposure. Final offer.", isYou: true });
     addEntry(castEntry("AdminTradeBot_69", "acquired " + (p.item || "an item") + " (0.02 BB + exposure)"));
   } else if (p.kind === "listed") {
     Ticker.emitTicker({ text: "listed " + (p.item || "an item") + " (0 views and holding)", isYou: true });

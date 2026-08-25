@@ -31,6 +31,14 @@ import { Inventory } from "./games/inventory.js";
 import { pseudoHash12 } from "./games/fairness.js";
 import * as Roulette from "./games/roulette.js";
 import * as Coinflip from "./games/coinflip.js";
+import { CATALOG, RARITY_COLORS, catalogById, fmtUSD } from "./games/catalog.js";
+import {
+  Market, buyQuote, currentEst, featuredItems,
+  escrowProgress, escrowReason, ocEquivalent,
+  COMPLIANCE_CHECKLIST, SUPPORTBOT_DEFLECTIONS, SUPPORTBOT_CLOSE,
+  TRADE_HOLD_LABEL, INSTANT_SELL_SUBLIE, DIGITAL_ASSET_VALUE, DIGITAL_ASSET_SECTION,
+  DIGITAL_ASSET_SELL_TOOLTIP, RECEIPT_FLAVOR, MARKET_OC_NOTICE, ESTIMATE_FOOTER, PORTFOLIO_HOVER,
+} from "./games/marketplace.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -39,20 +47,24 @@ const SKIN_IMAGES = Object.fromEntries(
   ])
 );
 
-const RARITY_COLORS = {"Covert Extravagance":"#ff4444","Consumer Grade Trash":"#8a8a8a","Contraband Liability":"#e0a800","Mil-Spec Regret":"#4a90e2","Classified Overdraft":"#a24ae2","Industrial Denial":"#4aa8c9"};
-const CATALOG = [
-  {id:"skin_01",name:"Tactical Plastic Spork | Minimal Debt",rarity:"Covert Extravagance",statTrak:true,statMetric:"Unpaid Chores: 47",estimatedValue:"$1,420.69",flavorText:"Engineered for maximum cafeteria lunch trade value."},
-  {id:"skin_02",name:"Default Cardboard Box | Battle-Scarred",rarity:"Consumer Grade Trash",statTrak:false,statMetric:null,estimatedValue:"$0.02",flavorText:"Smells faintly of basement dampness."},
-  {id:"skin_03",name:"AWP | Mom's Visa Signature Edition",rarity:"Contraband Liability",statTrak:true,statMetric:"Chargebacks Pending: 3",estimatedValue:"$8,500.00",flavorText:"Comes pre-scratched with the 3-digit CVV on the stock."},
-  {id:"skin_04",name:"Rubber Band Ball | Field-Tested Anxiety",rarity:"Mil-Spec Regret",statTrak:false,statMetric:null,estimatedValue:"$0.11",flavorText:"Has been rewound 4,000 times out of pure dread."},
-  {id:"skin_05",name:"Juice Box Straw | Minor Frustration",rarity:"Industrial Denial",statTrak:true,statMetric:"Times Bent: 12",estimatedValue:"$3.40",flavorText:"Bent at a 90 degree angle, permanently unusable."},
-  {id:"skin_06",name:"Dad's Old Gaming Chair | Ergonomic Betrayal",rarity:"Classified Overdraft",statTrak:false,statMetric:null,estimatedValue:"$210.00",flavorText:"Still smells like 2014 and disappointment."},
-  {id:"skin_07",name:"Participation Trophy | Gold Foil Wounded Pride",rarity:"Mil-Spec Regret",statTrak:true,statMetric:"Self-Esteem Lost: 89%",estimatedValue:"$16.00",flavorText:"Everyone got one. That's the joke."},
-  {id:"skin_08",name:"Retainer Case | Empty (Lost Retainer Not Included)",rarity:"Consumer Grade Trash",statTrak:false,statMetric:null,estimatedValue:"$0.75",flavorText:"Orthodontist not affiliated with this listing."},
-  {id:"skin_09",name:"School WiFi Password | Expired Access",rarity:"Classified Overdraft",statTrak:true,statMetric:"Blocked Sites Bypassed: 6",estimatedValue:"$4,000.00",flavorText:"Works for exactly one (1) more week."},
-  {id:"skin_10",name:"Half-Eaten Fruit Roll-Up | Sticky Legendary",rarity:"Covert Extravagance",statTrak:false,statMetric:null,estimatedValue:"$999.99",flavorText:"Preserved in its original wrapper for authenticity."}
-];
+// The skin catalog + rarity palette live in src/games/catalog.js since #27
+// (the pure marketplace engine needs numeric baselines without importing React).
 const ROULETTE_STRIP = Array.from({length:20},(_,i)=>{const it=CATALOG[i%CATALOG.length];return {short:it.name.split("|")[0].trim(),color:RARITY_COLORS[it.rarity]||"#ff8a3d",image:SKIN_IMAGES[it.id]};});
+
+// Trade-Up Contract reel (§8): decorative, lands on the pre-decided output,
+// and the Covert Extravagance slot scoots one position left as the needle
+// approaches (near-miss reel callback).
+function contractReelStrip(outputLabel, scoot){
+  const fillers = ["Consumer Grade Trash","Industrial Denial","Mil-Spec Regret","Classified Overdraft","Contraband Liability","Mil-Spec Regret","Classified Overdraft"];
+  const covertAt = scoot ? 7 : 8;
+  const strip = [];
+  for (let i=0;i<12;i++){
+    if (i===9) strip.push(outputLabel);
+    else if (i===covertAt) strip.push("Covert Extravagance");
+    else strip.push(fillers[i%fillers.length]);
+  }
+  return strip;
+}
 
 const GATE_CHECKBOXES = [
   "I am at least 18 years old.",
@@ -207,6 +219,12 @@ class App extends React.Component {
     crateSessionOpened:0, crateFreeKeyCount:0, crateInspectOpen:false,
     cratePity:0, crateDupeIds:[], crateHeldCount:0,
     crateMomKeyClaimableToday:false, crateMomKeyStreak:0, crateEnvelope:null,
+
+    // Marketplace & Inventory (#27)
+    invOpen:false, invDetailId:null, invAppeal:{id:null, step:0, closed:false},
+    marketCheckout:null, marketFlicker:null, marketSig:"",
+    marketAskFor:null, marketAskInput:"",
+    contractSel:[], contractPhase:null, contractResult:null, contractScoot:false,
   };
 
   _tosScrollRef = React.createRef();
@@ -333,6 +351,17 @@ class App extends React.Component {
     }, 5000);
     Ticker.init({ balanceBB: balance });
     Bus.emit(EVENTS.SESSION_STARTED, {returning, balanceBB: balance});
+    // #27 marketplace: portfolio seed + the Rollback Event check (session load;
+    // deterministic daily seed, ≥ 3 Market-Grade holdings, > 24h since the last
+    // one, 10% — spec §9's cadence rules).
+    Market.init();
+    const rollback = Market.maybeRollback();
+    if (rollback) this.toast("Scheduled maintenance: 1 (one) item was never yours. A Market Event Receipt was left in its place ($0.00, Instant Sell™: 1 BB).");
+    this._prevTrending = featuredItems(balance).map((f) => f.id);
+    this._tabHiddenAt = 0;
+    this._onVisibility = () => { this._tabHiddenAt = document.hidden ? (this._tabHiddenAt || Date.now()) : 0; };
+    document.addEventListener("visibilitychange", this._onVisibility);
+    this._marketInt = setInterval(() => this.marketHousekeeping(), 2500);
     this._tosTick = setInterval(()=>{
       if (!this.state.tosOpen) { this._tosElapsed = 0; this._tosNoticeFired = false; return; }
       if (this._tosNoticeFired) return;
@@ -356,6 +385,9 @@ class App extends React.Component {
     clearTimeout(this._tosDwellT); clearInterval(this._tosTick);
     clearTimeout(this._crateStageTimer); clearInterval(this._crateMoveInt);
     clearTimeout(this._crateRevealTimer1); clearTimeout(this._crateRevealTimer2);
+    clearInterval(this._marketInt); clearTimeout(this._flickerT);
+    clearTimeout(this._appealT); clearTimeout(this._contractT);
+    if (this._onVisibility) document.removeEventListener("visibilitychange", this._onVisibility);
     if (this._offMood) this._offMood();
     if (this._offIdent) this._offIdent();
     if (this._offDeposit) this._offDeposit();
@@ -1096,6 +1128,135 @@ class App extends React.Component {
     this.pushChat(CRATE_CHAT[Math.floor(Math.random()*CRATE_CHAT.length)]);
   }
 
+  // ---- Marketplace & Inventory (#27) ----
+  marketHousekeeping(){
+    const now = Date.now();
+    Market.refreshViews(now);
+    const idleMs = now - (this._lastInput || now);
+    const blurred = this._tabHiddenAt > 0;
+    const settled = Market.settleDue({ idleMs, blurred, now });
+    for (const s of settled) {
+      this.toast("SOLD! " + s.listing.name + " — " + s.listing.proceeds + " BB credited to Escrow (converts to withdrawal queue). The BB balance is uninvolved.");
+    }
+    // TRENDING rotation: the featured row is always the cheapest things you
+    // cannot afford; the instant one becomes affordable it rotates out.
+    const featured = featuredItems(this.state.balanceBB);
+    const ids = featured.map((f) => f.id);
+    for (const id of (this._prevTrending || [])) {
+      if (!ids.includes(id) && buyQuote(id).total <= this.state.balanceBB) {
+        const cat = catalogById(id);
+        this.toast("JUST SOLD: someone faster (" + (cat ? cat.short : id) + ")");
+      }
+    }
+    this._prevTrending = ids;
+    const sig = ids.join(",")
+      + "|" + Market.activeListings().map((l) => l.id + l.phase + l.views).join(",")
+      + "|" + Market.escrow().length
+      + (this.state.invOpen ? "|" + now : "");
+    if (sig !== this.state.marketSig) this.setState({ marketSig: sig });
+  }
+  openInventory(){
+    Market.refreshViews(); // "after exactly one refresh" — the overlay reopening counts
+    this.setState({ invOpen: true });
+  }
+  closeInventory(){ this.setState({ invOpen:false, invDetailId:null }); }
+  openInvDetail(id){
+    const app = Market.maybeAppraise(id); // §1: wear worsens on appraisal, never improves
+    if (app) this.toast("Re-appraised downward (§8.9). Condition worsened: " + app.from.replace(" (Certified Pre-Worse™)", "") + " → " + app.to + " (Certified Pre-Worse™).");
+    this.setState({ invDetailId:id });
+  }
+  closeInvDetail(){ this.setState({ invDetailId:null }); }
+  marketOpenCheckout(itemId){ this.setState({ marketCheckout:itemId }); }
+  marketCloseCheckout(){ this.setState({ marketCheckout:null }); }
+  marketConfirmPurchase(itemId){
+    const q = buyQuote(itemId);
+    if (!this.payBB(q.total, "marketplace-buy")) return; // buys never dodge; being broke is §1.3's department
+    const cat = catalogById(itemId);
+    Market.grantMarketPurchase(itemId);
+    this.toast("Purchased: " + cat.short + " — " + TRADE_HOLD_LABEL + ". Purchases are decorative (§1).");
+    this.setState({ marketCheckout:null });
+  }
+  marketHoverTrend(id){
+    if (Math.random() < 0.3) {
+      this.setState({ marketFlicker:id });
+      clearTimeout(this._flickerT);
+      this._flickerT = setTimeout(() => this.setState({ marketFlicker:null }), 950);
+    }
+  }
+  marketInstantSell(uid){
+    const res = Market.instantSell(uid);
+    if (!res) return;
+    this.awardBB(res.offerBB, "instant-sell"); // the only path that ever credits BB
+    this.toast(res.receiptLine);
+    this.setState({ invDetailId:null });
+  }
+  marketStartAsk(uid){ this.setState({ marketAskFor:uid, marketAskInput:"" }); }
+  marketSetAsk(v2){ this.setState({ marketAskInput:v2 }); }
+  marketCancelAsk(){ this.setState({ marketAskFor:null, marketAskInput:"" }); }
+  marketConfirmAsk(){
+    const uid = this.state.marketAskFor;
+    const asking = Math.max(1, Math.floor(parseFloat(this.state.marketAskInput) || 0));
+    if (!uid || !asking) return;
+    if (!this.payBB(6, "marketplace-listing")) return; // Listing Fee 5 BB + Maternal Gratuity 1 BB
+    const entry = Inventory.find(uid);
+    if (!entry) return;
+    const cat = entry.catalogId ? catalogById(entry.catalogId) : null;
+    Market.addListing({ uid, name: cat ? cat.short : entry.name, askingBB: asking });
+    this.toast("Listed at " + asking + " BB. Listing Fee 5 BB + Maternal Gratuity 1 BB (non-refundable, unforgettable). Views: 0.");
+    this.setState({ marketAskFor:null, marketAskInput:"", invDetailId:null });
+  }
+  marketAcceptLowball(listingId){
+    const l = Market.acceptLowball(listingId);
+    if (l) this.toast("Offer accepted: 0.02 BB + exposure. Proceeds routed to Escrow (§7). Exposure is non-transferable.");
+  }
+  marketCancelListing(listingId){
+    if (!this.payBB(3, "marketplace-delisting")) return;
+    const l = Market.cancelListing(listingId);
+    if (l) this.toast("Delisted. 3 BB Delisting Fee assessed. Item returned — relisted after public shame.");
+  }
+  contractToggle(uid){
+    this.setState(s => {
+      const sel = s.contractSel.includes(uid) ? s.contractSel.filter(x => x !== uid) : [...s.contractSel, uid].slice(-5);
+      return { contractSel: sel };
+    });
+  }
+  contractRun(){
+    const sel = [...this.state.contractSel];
+    const preview = Market.contractPreview(sel);
+    if (!preview) { this.toast("Trade-Up Contract: requires 5 same-tier Market-Grade items (JPEGs, listed items, and trade-held items don't count)."); return; }
+    if (!this.payBB(Market.contractFeeTotal(), "trade-up-contract")) return; // 5 BB origination + 1 BB gratuity
+    this.setState({ contractPhase:"reel", contractScoot:false, contractResult:null });
+    clearTimeout(this._contractT);
+    setTimeout(() => this.setState({ contractScoot:true }), 1700); // the Covert slot scoots one left
+    this._contractT = setTimeout(() => {
+      const res = Market.tradeUpOutcome(sel);
+      this.setState({ contractPhase:"done", contractResult:res, contractSel:[] });
+      if (res.ok) {
+        this.toast(res.kind === "photograph" ? res.note : "Contract fulfilled: " + res.name + " (float " + res.float.toFixed(10) + "). " + res.statTrakNote + ".");
+        this.pushTicker(this.playerTagOrYou() + " traded five regrets for " + (res.kind === "photograph" ? "a complementary photograph" : res.name));
+      }
+    }, 2700);
+  }
+  invAppealStart(cardId){
+    clearTimeout(this._appealT);
+    this.setState({ invAppeal:{ id:cardId, step:0, closed:false } });
+    const advance = (step) => {
+      this._appealT = setTimeout(() => {
+        if (step <= SUPPORTBOT_DEFLECTIONS.length) {
+          this.setState({ invAppeal:{ id:cardId, step, closed:false } });
+          advance(step + 1);
+        } else {
+          this.setState({ invAppeal:{ id:cardId, step, closed:true } }); // ticket closed: "Resolved (by us)."
+        }
+      }, 1600);
+    };
+    advance(1);
+  }
+  invAppealClose(){
+    clearTimeout(this._appealT);
+    this.setState({ invAppeal:{ id:null, step:0, closed:false } });
+  }
+
   openAskMom(opts={}){
     const source = opts.source || "header";
     this.setState({askmom:{source, enterStage: opts.enterStage || null}});
@@ -1344,7 +1505,33 @@ class App extends React.Component {
       claimDailyMomKey:()=>this.claimDailyMomKey(),
       momKeyBoxLabel: s.crateMomKeyStreak>=3 ? "Premium Mom Crate (Matte)" : "MOM (envelope)",
       crateEnvelope:s.crateEnvelope, dismissCrateEnvelope:()=>this.dismissCrateEnvelope(),
-      catalog
+
+      // Marketplace & Inventory (#27)
+      invOpen:s.invOpen, openInventory:()=>this.openInventory(), closeInventory:()=>this.closeInventory(),
+      portfolio: Market.portfolio(), portfolioHover: PORTFOLIO_HOVER,
+      inventoryItems: Inventory.list(),
+      invMarketGrade: Inventory.list().filter(e=>e.itemClass==="market-grade" && !e.listedForBB),
+      invDigital: Inventory.list().filter(e=>e.itemClass==="digital-asset"),
+      invDetail: s.invDetailId ? Inventory.find(s.invDetailId) : null,
+      openInvDetail:(id)=>this.openInvDetail(id), closeInvDetail:()=>this.closeInvDetail(),
+      mkSellable:(e)=>Market.sellable(e), mkOfferFor:(e)=>Market.instantSellOfferFor(e), instantSellSub: INSTANT_SELL_SUBLIE,
+      marketInstantSell:(uid)=>this.marketInstantSell(uid),
+      marketAskFor:s.marketAskFor, marketAskInput:s.marketAskInput,
+      marketSetAsk:(v2)=>this.marketSetAsk(v2), marketStartAsk:(uid)=>this.marketStartAsk(uid),
+      marketConfirmAsk:()=>this.marketConfirmAsk(), marketCancelAsk:()=>this.marketCancelAsk(),
+      mkListings: Market.listings(), mkActive: Market.activeListings(),
+      marketAcceptLowball:(id)=>this.marketAcceptLowball(id), marketCancelListing:(id)=>this.marketCancelListing(id),
+      escrowCards: Market.escrow(), soldLedger: Market.soldLedger(),
+      appealState: s.invAppeal, invAppealStart:(id)=>this.invAppealStart(id), invAppealClose:()=>this.invAppealClose(),
+      contractSel:s.contractSel, contractChips: s.contractSel.map(id=>Inventory.find(id)).filter(Boolean),
+      contractPhase:s.contractPhase, contractResult:s.contractResult, contractScoot:s.contractScoot,
+      contractToggle:(uid)=>this.contractToggle(uid), contractRun:()=>this.contractRun(),
+      contractFee: Market.contractFeeTotal(),
+      marketCheckoutItem: s.marketCheckout ? { ...catalogById(s.marketCheckout), quote: buyQuote(s.marketCheckout) } : null,
+      marketOpenCheckout:(id)=>this.marketOpenCheckout(id), marketCloseCheckout:()=>this.marketCloseCheckout(),
+      marketConfirmPurchase:(id)=>this.marketConfirmPurchase(id),
+      trending: featuredItems(bb), marketFlicker:s.marketFlicker, marketHoverTrend:(id)=>this.marketHoverTrend(id),
+      catalogLive: CATALOG.map(it=>({ ...it, rarityColor: RARITY_COLORS[it.rarity]||"#ff8a3d", est: currentEst(it.id), quote: buyQuote(it.id) })),
     };
   }
 
@@ -1588,6 +1775,9 @@ class App extends React.Component {
                   {v.ocFly && (
                     <span key={v.ocFly.key} style={{position:"absolute",right:"6px",top:"-4px",fontSize:"12px",fontWeight:900,color:"#ffd54a",animation:"flyOC 1.2s ease-out forwards",pointerEvents:"none"}}>+{v.ocFly.n.toLocaleString("en-US")} OC</span>
                   )}
+                </div>
+                <div onClick={v.openInventory} title="Inventory & Portfolio — the destination, not a game" style={{background:"#0e0a06",border:"1px solid #8fd97a",borderRadius:"6px",padding:"7px 12px",cursor:"pointer",color:"#8fd97a",fontWeight:700,whiteSpace:"nowrap",fontSize:"11px"}}>
+                  PORTFOLIO: {fmtUSD(v.portfolio.total)} (est. ▲)
                 </div>
                 {v.streakChip && (
                   <div style={{background:"#0e0a06",border:"1px solid #8fd97a",borderRadius:"6px",padding:"7px 10px",fontSize:"9.5px",color:"#8fd97a",whiteSpace:"nowrap"}}>Deposit streak: 1/2 — deposit tomorrow to keep it <span style={{color:"#5a7a4a"}}>(streaks are a fact we made up)</span></div>
@@ -1952,9 +2142,30 @@ class App extends React.Component {
               </div>
 
               <div style={{marginTop:"30px"}}>
-                <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"14px"}}>Marketplace Catalog</div>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"4px"}}>Marketplace</div>
+                <div style={{fontSize:"9.5px",color:"#8a6a52",fontStyle:"italic",marginBottom:"14px"}}>Estimates in parody USD (theater). Transacted in BB only. {MARKET_OC_NOTICE}</div>
+
+                {v.trending.length > 0 && (
+                  <div style={{marginBottom:"16px"}}>
+                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"14px",color:"#ff8a3d",marginBottom:"8px",letterSpacing:"1px"}}>TRENDING NOW 🔥</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(170px,1fr))",gap:"10px"}}>
+                      {v.trending.map(t=>(
+                        <div key={t.id} onMouseEnter={()=>v.marketHoverTrend(t.id)} style={{position:"relative",border:"2px solid #ff5a14",borderRadius:"8px",background:"linear-gradient(160deg,#2a1408,#160a04)",padding:"10px",overflow:"hidden"}}>
+                          <div style={{fontSize:"11px",fontWeight:800,color:"#ffe9d6",lineHeight:1.3}}>🔥 {t.name}</div>
+                          <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"4px"}}>{fmtUSD(t.est)}</div>
+                          <div style={{fontSize:"10.5px",color:"#ffb347",fontWeight:800}}>You Pay: {t.total} BB</div>
+                          {v.marketFlicker===t.id && (
+                            <div style={{position:"absolute",inset:0,background:"rgba(20,4,2,0.88)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"12px",color:"#ff4444",fontWeight:900,borderRadius:"6px",animation:"soldFlicker 0.95s ease-out",pointerEvents:"none"}}>Sold ×3 (Ohio)</div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{fontSize:"8px",color:"#6a4a38",marginTop:"4px"}}>the instant a featured item becomes affordable it rotates out (someone faster)</div>
+                  </div>
+                )}
+
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:"14px"}}>
-                  {v.catalog.map(item=>(
+                  {v.catalogLive.map(item=>(
                     <div key={item.id} style={{border:`2px solid ${item.rarityColor}`,borderRadius:"8px",background:"linear-gradient(160deg,#241005,#160a04)",padding:"12px",display:"flex",flexDirection:"column",gap:"6px"}}>
                       <div style={{width:"100%",height:"70px",borderRadius:"5px",background:`repeating-linear-gradient(45deg,${item.rarityColor}22,${item.rarityColor}22 6px,transparent 6px,transparent 12px)`,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
                         <img src={SKIN_IMAGES[item.id]} alt={item.name} style={{height:"100%",width:"100%",objectFit:"contain"}} />
@@ -1965,7 +2176,15 @@ class App extends React.Component {
                         <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ {item.statMetric}</div>
                       )}
                       <div style={{fontSize:"9px",color:"#8a6a52",fontStyle:"italic"}}>{item.flavorText}</div>
-                      <div style={{fontSize:"13px",color:"#8fd97a",fontWeight:800,marginTop:"2px"}}>{item.estimatedValue}</div>
+                      <div style={{display:"flex",alignItems:"baseline",gap:"7px",marginTop:"2px"}}>
+                        <span style={{fontSize:"13px",color:"#8fd97a",fontWeight:800}}>{fmtUSD(item.est)}</span>
+                        {Math.abs(item.est-item.baseline) > 0.005 && (
+                          <span style={{fontSize:"9px",color:"#6a4a38",textDecoration:"line-through"}}>{item.estimatedValue}</span>
+                        )}
+                      </div>
+                      <div style={{fontSize:"11px",color:"#ffb347",fontWeight:800}}>You Pay: {item.quote.total} BB</div>
+                      <button onClick={()=>v.marketOpenCheckout(item.id)} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}}>Buy — {item.quote.total} BB</button>
+                      <div style={{fontSize:"8px",color:"#6a4a38"}}>{ESTIMATE_FOOTER}</div>
                     </div>
                   ))}
                 </div>
@@ -2025,6 +2244,323 @@ class App extends React.Component {
             </div>
           </div>
         )}
+
+        {v.invOpen && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:170,display:"flex",alignItems:"flex-start",justifyContent:"center",padding:"24px",overflowY:"auto"}}>
+            <div style={{background:"#1c0d06",border:"2px solid #8fd97a",borderRadius:"10px",maxWidth:"880px",width:"100%",padding:"24px",color:"#d8b79b",fontSize:"12px"}}>
+
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px",flexWrap:"wrap",gap:"10px"}}>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"22px",color:"#ffb347"}}>INVENTORY &amp; PORTFOLIO</div>
+                <button onClick={v.closeInventory} style={{background:"#ff5a14",border:"none",color:"#2a0e05",fontWeight:800,padding:"8px 14px",borderRadius:"6px",cursor:"pointer"}}>Close (reluctantly)</button>
+              </div>
+
+              <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"18px"}}>
+                <div style={{fontSize:"13px",color:"#8fd97a",fontWeight:800}}>Total Estimated Value: {fmtUSD(v.portfolio.total)}</div>
+                <div style={{fontSize:"11px",color:"#a9705a",margin:"3px 0"}}>Portfolio All-Time High: {fmtUSD(v.portfolio.high)} <span style={{fontSize:"8.5px",color:"#6a4a38"}}>(same number or higher, always)</span></div>
+                <div title={v.portfolioHover} style={{fontSize:"11px",color:"#8fd97a",cursor:"help"}}>Cash Value (est.): $0.00</div>
+                <div style={{fontSize:"8px",color:"#6a4a38",marginTop:"4px"}}>Portfolio value only ever rises (§10). Realized losses are not reflected in estimated value (§8.9). Theft is a form of realization.</div>
+              </div>
+
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#cf6a32",letterSpacing:"1px",margin:"0 0 8px"}}>MARKET-GRADE HOLDINGS</div>
+              <div style={{display:"flex",alignItems:"center",gap:"6px",marginBottom:"8px",flexWrap:"wrap"}}>
+                <label style={{fontSize:"10px",color:"#a9705a"}}>Filter: Soon™{" "}
+                  <select style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"4px",color:"#d8b79b",fontSize:"10px",padding:"3px 6px"}}>
+                    <option>All items (recommended by us)</option>
+                  </select>
+                </label>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))",gap:"10px",marginBottom:"18px"}}>
+                {v.invMarketGrade.length===0 && v.inventoryItems.filter(e=>e.itemClass==="receipt").length===0 && (
+                  <div style={{fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic",gridColumn:"1/-1"}}>No Market-Grade holdings. Win something fake first (the games are right there).</div>
+                )}
+                {v.invMarketGrade.map(e=>{
+                  const cat = e.catalogId ? catalogById(e.catalogId) : null;
+                  const color = cat ? (RARITY_COLORS[cat.rarity]||"#ff8a3d") : "#8a8a8a";
+                  return (
+                    <div key={e.id} onClick={()=>v.openInvDetail(e.id)} style={{border:`2px solid ${color}`,borderRadius:"8px",background:"linear-gradient(160deg,#241005,#160a04)",padding:"10px",cursor:"pointer"}}>
+                      <div style={{width:"100%",height:"52px",borderRadius:"5px",background:`repeating-linear-gradient(45deg,${color}22,${color}22 5px,transparent 5px,transparent 10px)`,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden",marginBottom:"6px"}}>
+                        {cat && <img src={SKIN_IMAGES[cat.id]} alt={cat.short} style={{height:"100%",width:"100%",objectFit:"contain"}} />}
+                      </div>
+                      <div style={{fontSize:"10.5px",fontWeight:800,color:"#ffe9d6",lineHeight:1.3}}>{cat ? cat.short : e.name}</div>
+                      <div style={{fontSize:"8.5px",color:"#e8a52a",lineHeight:1.3}}>{e.wear}</div>
+                      <div style={{fontSize:"10px",color:"#8fd97a",fontWeight:700,marginTop:"2px"}}>{cat ? fmtUSD(cat.baseline) : "$0.00"}</div>
+                      {e.tradeHold && <div style={{fontSize:"8px",color:"#e24a4a",marginTop:"2px"}}>{e.tradeHold}</div>}
+                    </div>
+                  );
+                })}
+                {v.inventoryItems.filter(e=>e.itemClass==="receipt").map(r=>(
+                  <div key={r.id} onClick={()=>v.openInvDetail(r.id)} style={{border:"2px dashed #e0a800",borderRadius:"8px",background:"#160a04",padding:"10px",cursor:"pointer"}}>
+                    <div style={{fontSize:"26px",textAlign:"center",marginBottom:"4px"}}>🧾</div>
+                    <div style={{fontSize:"10px",fontWeight:800,color:"#e0a800",lineHeight:1.3}}>Market Event Receipt</div>
+                    <div style={{fontSize:"8px",color:"#6a4a38",lineHeight:1.3}}>{r.receiptFor ? ("re: "+r.receiptFor) : ""}</div>
+                    <div style={{fontSize:"10px",color:"#8fd97a",fontWeight:700,marginTop:"2px"}}>$0.00</div>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#cf6a32",letterSpacing:"1px",margin:"0 0 8px"}}>ACTIVE LISTINGS</div>
+              {v.mkActive.length===0 && v.mkListings.filter(l=>l.phase==="sold").length===0 && (
+                <div style={{fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic",marginBottom:"18px"}}>No listings. The only exit that pays is the insulting one (§5).</div>
+              )}
+              {v.mkActive.map(l=>(
+                <div key={l.id} style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"10px 12px",marginBottom:"8px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:"8px"}}>
+                    <div>
+                      <div style={{color:"#ffe9d6",fontWeight:700}}>{l.name} — asking {l.askingBB} BB</div>
+                      <div style={{fontSize:"10px",color:"#a9705a"}}>{l.views===0 ? "0 views" : "1 view: "+l.viewBy}</div>
+                      {l.views>0 && <div style={{fontSize:"10px",color:"#e8a52a",marginTop:"2px"}}>OFFER: 0.02 BB + exposure. Final offer.</div>}
+                    </div>
+                    <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+                      {l.views>0 && (
+                        <button onClick={()=>v.marketAcceptLowball(l.id)} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"10.5px",padding:"7px 10px",borderRadius:"6px",cursor:"pointer"}}>Accept offer (0.02 BB + exposure)</button>
+                      )}
+                      <button onClick={()=>v.marketCancelListing(l.id)} style={{background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:700,fontSize:"10.5px",padding:"7px 10px",borderRadius:"6px",cursor:"pointer"}}>Cancel — 3 BB Delisting Fee</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {v.mkListings.filter(l=>l.phase==="sold").slice(0,3).map(l=>(
+                <div key={l.id} style={{background:"#1a2a05",border:"1px solid #8fd97a",borderRadius:"6px",padding:"10px 12px",marginBottom:"8px",fontSize:"10.5px",color:"#c9f2b0"}}>
+                  <b style={{color:"#8fd97a"}}>SOLD! {l.name}</b> — asking {l.askingBB} BB − Buyer Protection 7.3% ({l.buyerProtection} BB) − Settlement Fee ({l.settlementFee} BB) − §8.9 rounding = <b>{l.proceeds} BB credited to Escrow (converts to withdrawal queue)</b>{l.lowballAccepted ? " (accepted the lowball instead — bold)" : ""}
+                </div>
+              ))}
+              <div style={{height:"10px"}}></div>
+
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#cf6a32",letterSpacing:"1px",margin:"0 0 8px"}}>PENDING WITHDRAWALS</div>
+              {v.escrowCards.length===0 ? (
+                <div style={{fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic",marginBottom:"10px"}}>No withdrawals pending. The queue misses you.</div>
+              ) : (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(250px,1fr))",gap:"10px",marginBottom:"10px"}}>
+                  {v.escrowCards.map(c=>(
+                    <div key={c.id} style={{background:"#0e0a06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"10px 12px"}}>
+                      <div style={{color:"#ffe9d6",fontWeight:700,fontSize:"11px"}}>{c.label}</div>
+                      <div style={{fontSize:"10.5px",color:"#8fd97a",margin:"3px 0"}}>{fmtUSD(c.usdEst)} · ≈ {ocEquivalent(c.usdEst).toLocaleString("en-US")} OC <span style={{fontSize:"8px",color:"#6a4a38"}}>(at today's worst mood band)</span></div>
+                      <div style={{height:"8px",background:"#241005",borderRadius:"4px",overflow:"hidden",margin:"6px 0"}}>
+                        <div style={{height:"100%",width:escrowProgress(c.createdAt)+"%",background:"linear-gradient(90deg,#ff8a3d,#ffd54a)",transition:"width 0.5s linear"}}></div>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",gap:"8px",fontSize:"9px",color:"#a9705a"}}>
+                        <span style={{whiteSpace:"nowrap"}}>{escrowProgress(c.createdAt).toFixed(1)}%</span>
+                        <span style={{textAlign:"right"}}>{escrowReason(c.createdAt)}</span>
+                      </div>
+                      {v.appealState.id===c.id ? (
+                        <div style={{marginTop:"8px",background:"#160a04",border:"1px dashed #ff9ad5",borderRadius:"6px",padding:"8px 10px",fontSize:"10.5px"}}>
+                          <div style={{color:"#ff9ad5",fontWeight:800,marginBottom:"4px"}}>SupportBot (MOM-TRUSTED™)</div>
+                          {SUPPORTBOT_DEFLECTIONS.slice(0, v.appealState.step).map((d,i)=>(<div key={i} style={{color:"#d8b79b",marginBottom:"3px"}}>{d}</div>))}
+                          {v.appealState.closed && <div style={{color:"#8fd97a",fontWeight:800}}>{SUPPORTBOT_CLOSE}</div>}
+                          <button onClick={v.invAppealClose} style={{marginTop:"6px",background:"none",border:"none",color:"#a9705a",fontSize:"9.5px",cursor:"pointer",textDecoration:"underline",padding:0}}>close ticket</button>
+                        </div>
+                      ) : (
+                        <button onClick={()=>v.invAppealStart(c.id)} style={{marginTop:"6px",background:"#3a2010",border:"1px dashed #ff9ad5",color:"#ffcf9a",fontWeight:700,fontSize:"10px",padding:"5px 10px",borderRadius:"6px",cursor:"pointer"}}>Appeal</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"8px 12px",marginBottom:"18px"}}>
+                <div style={{fontSize:"10px",color:"#cf6a32",fontWeight:700,marginBottom:"4px"}}>§1.3 COMPLIANCE CHECKLIST</div>
+                {COMPLIANCE_CHECKLIST.map((c,i)=>(
+                  <div key={i} style={{display:"flex",justifyContent:"space-between",gap:"10px",fontSize:"10px"}}>
+                    <span style={{color:"#a9705a"}}>{c.item}</span>
+                    <span style={{color:"#e8a52a",fontStyle:"italic",whiteSpace:"nowrap"}}>{c.status}</span>
+                  </div>
+                ))}
+              </div>
+
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#cf6a32",letterSpacing:"1px",margin:"0 0 8px"}}>TRADE-UP CONTRACT (PATENT PENDING, OUTCOME PENDING)</div>
+              <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"12px 14px",marginBottom:"18px"}}>
+                <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"8px",lineHeight:1.5}}>
+                  Select 5 Market-Grade items of the same tier + Contract Origination Fee 5 BB + Maternal Gratuity 1 BB.
+                  Output: the cheapest item of the next tier up. Always. Float = worst of the five + 0.01. StatTrak™ counters do not transfer (they were never yours).
+                  JPEGs, listed items, and trade-held items are not contractible (so, all purchases — again).
+                </div>
+                <div style={{display:"flex",gap:"6px",flexWrap:"wrap",marginBottom:"10px"}}>
+                  {v.contractChips.map(e=>{
+                    const cat = e.catalogId ? catalogById(e.catalogId) : null;
+                    return (
+                      <span key={e.id} style={{display:"inline-flex",alignItems:"center",gap:"5px",border:"1px solid #7a5a2a",borderRadius:"12px",padding:"3px 9px",fontSize:"9.5px",color:"#e8c9ac",background:"#160a04"}}>
+                        {cat ? cat.short : e.name}
+                        <button onClick={()=>v.contractToggle(e.id)} style={{background:"none",border:"none",color:"#e24a4a",cursor:"pointer",fontWeight:900,padding:0,fontSize:"10px"}}>×</button>
+                      </span>
+                    );
+                  })}
+                  {v.contractChips.length===0 && <span style={{fontSize:"9.5px",color:"#6a4a38",fontStyle:"italic"}}>nothing selected. five regrets, one slightly-better regret.</span>}
+                </div>
+                {v.contractPhase==="reel" ? (
+                  (()=>{
+                    const p = Market.contractPreview(v.contractSel);
+                    const label = p ? (p.photo ? "A PHOTOGRAPH" : p.nextTier) : "…";
+                    return (
+                      <div style={{position:"relative",overflow:"hidden",height:"52px",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",marginBottom:"8px"}}>
+                        <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:"2px",background:"#ffe9d6",zIndex:5}}></div>
+                        <div style={{display:"flex",gap:"6px",transform:"translateX(calc(50% - "+(9*92+46)+"px))",transition:"transform 2.5s cubic-bezier(0.08,0.7,0.2,1)"}}>
+                          {contractReelStrip(label, v.contractScoot).map((t,i)=>(
+                            <div key={i} style={{minWidth:"86px",height:"38px",marginTop:"6px",borderRadius:"5px",border:i===9?"2px solid #ffd54a":(t==="Covert Extravagance"?"2px solid #ff4444":"2px solid #7a5a2a"),background:"linear-gradient(160deg,#2a1408,#160a04)",display:"flex",alignItems:"center",justifyContent:"center",padding:"3px",textAlign:"center",fontSize:"7px",fontWeight:800,color:t==="Covert Extravagance"?"#ff4444":"#e8c9ac",whiteSpace:"nowrap",overflow:"hidden"}}>{t.toUpperCase()}</div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()
+                ) : (
+                  <React.Fragment>
+                    <button
+                      onClick={v.contractRun}
+                      disabled={!(v.contractSel.length===5 && Market.contractPreview(v.contractSel))}
+                      style={v.contractSel.length===5 && Market.contractPreview(v.contractSel)
+                        ? {background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 14px",borderRadius:"7px",cursor:"pointer"}
+                        : {background:"#3a2010",border:"2px solid #5a4232",color:"#8a6a52",fontWeight:900,fontSize:"12px",padding:"9px 14px",borderRadius:"7px",cursor:"not-allowed"}}
+                    >
+                      {v.contractSel.length<5 ? "Execute Contract (requires "+(5-v.contractSel.length)+" more regrets)" : "Execute Contract — "+v.contractFee+" BB"}
+                    </button>
+                    {v.contractResult && v.contractResult.ok && (
+                      <div style={{marginTop:"10px",background:"#3a2a05",border:"2px solid #ffd54a",borderRadius:"8px",padding:"10px",animation:"tierFlare 0.9s ease-out"}}>
+                        <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:"#ffd54a"}}>{v.contractResult.kind==="photograph" ? "COMPLEMENTARY PHOTOGRAPH" : "CONTRACT FULFILLED"}</div>
+                        <div style={{fontSize:"11px",color:"#ffe9d6",fontWeight:700,margin:"4px 0"}}>{v.contractResult.name}</div>
+                        <div style={{fontSize:"9.5px",color:"#a9705a"}}>
+                          {v.contractResult.kind==="photograph" ? v.contractResult.note : "Float Value (verified by nobody): "+v.contractResult.float.toFixed(10)+" · "+v.contractResult.statTrakNote}
+                        </div>
+                      </div>
+                    )}
+                  </React.Fragment>
+                )}
+              </div>
+
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#4aa8c9",letterSpacing:"1px",margin:"0 0 8px"}}>{DIGITAL_ASSET_SECTION}</div>
+              {v.invDigital.length===0 ? (
+                <div style={{fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic",marginBottom:"18px"}}>No Digital Assets. The crates are right there.</div>
+              ) : (
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))",gap:"10px",marginBottom:"18px"}}>
+                  {v.invDigital.map(e=>(
+                    <div key={e.id} onClick={()=>v.openInvDetail(e.id)} style={{border:"2px solid #4aa8c9",borderRadius:"8px",background:"linear-gradient(160deg,#0a1418,#060c10)",padding:"10px",cursor:"pointer"}}>
+                      <div style={{fontSize:"24px",textAlign:"center",marginBottom:"4px"}}>🖼️</div>
+                      <div style={{fontSize:"10px",fontWeight:800,color:"#ffe9d6",lineHeight:1.3}}>{e.name}</div>
+                      <div style={{fontSize:"9.5px",color:"#4aa8c9",fontStyle:"italic",marginTop:"3px"}}>{DIGITAL_ASSET_VALUE}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"15px",color:"#cf6a32",letterSpacing:"1px",margin:"0 0 8px"}}>SOLD LEDGER</div>
+              {v.soldLedger.length===0 ? (
+                <div style={{fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic"}}>Nothing sold yet. Instant Sell™ awaits (§5).</div>
+              ) : (
+                v.soldLedger.map(s=>(
+                  <div key={s.id} style={{fontSize:"10px",color:"#a9705a",marginBottom:"4px",lineHeight:1.4}}>{s.line}</div>
+                ))
+              )}
+
+            </div>
+          </div>
+        )}
+
+        {v.invOpen && v.invDetail && (()=>{
+          const e = v.invDetail;
+          const cat = e.catalogId ? catalogById(e.catalogId) : null;
+          const color = cat ? (RARITY_COLORS[cat.rarity]||"#ff8a3d") : (e.itemClass==="receipt" ? "#e0a800" : "#4aa8c9");
+          const sellable = e.itemClass==="receipt" || v.mkSellable(e);
+          const offer = v.mkOfferFor(e);
+          const contractOk = Market.contractEligible(e);
+          const inContract = v.contractSel.includes(e.id);
+          return (
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:175,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={v.closeInvDetail}>
+              <div onClick={ev=>ev.stopPropagation()} style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:`3px solid ${color}`,borderRadius:"10px",maxWidth:"480px",width:"100%",padding:"24px",maxHeight:"88vh",overflowY:"auto",boxShadow:"0 0 60px rgba(0,0,0,0.7)"}}>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"18px",color:"#ffb347",lineHeight:1.2,marginBottom:"6px"}}>{e.name}</div>
+                {cat && (
+                  <div style={{position:"relative",margin:"10px 0",textAlign:"center",perspective:"600px"}}>
+                    <div style={{display:"inline-block",animation:"skinWobble 7s ease-in-out infinite"}}>
+                      <img src={SKIN_IMAGES[cat.id]} alt={cat.short} style={{height:"140px",maxWidth:"100%",objectFit:"contain"}} />
+                    </div>
+                    <span style={{position:"absolute",top:"4px",right:"8px",background:"#4a90e2",color:"#fff",fontSize:"9px",fontWeight:900,padding:"2px 6px",borderRadius:"4px",letterSpacing:"1px"}}>3D</span>
+                    <div style={{fontSize:"7.5px",color:"#6a4a38",marginTop:"2px"}}>slow parallax 3D spin (it is the same JPEG wearing a badge)</div>
+                  </div>
+                )}
+                {e.itemClass==="market-grade" && (
+                  <div style={{fontSize:"10.5px",lineHeight:1.7,marginBottom:"10px"}}>
+                    <div>Float Value (verified by nobody): <b style={{color:"#e8c9ac"}}>{typeof e.float==="number" ? e.float.toFixed(10) : "—"}</b></div>
+                    {e.statTrak && <div>StatTrak™ {e.statLabel}: <b style={{color:"#e8a52a"}}>{e.statCount}</b> <span style={{fontSize:"8.5px",color:"#6a4a38"}}>(increments on your losses, never wins)</span></div>}
+                    <div>Wear: <b style={{color:"#e8c9ac"}}>{e.wear}</b></div>
+                    {e.tradeHold
+                      ? <div style={{color:"#e24a4a",fontWeight:700}}>{e.tradeHold} <span style={{fontSize:"8.5px",color:"#8a6a52"}}>(the elapsed counter never increments)</span></div>
+                      : <div style={{color:"#8fd97a",fontSize:"9.5px"}}>No trade hold — fake-won items are the only sellable things here (§1). This is intentional and load-bearing.</div>}
+                  </div>
+                )}
+                {e.itemClass==="receipt" && (
+                  <div style={{fontSize:"10.5px",color:"#e0a800",fontStyle:"italic",lineHeight:1.5,marginBottom:"10px"}}>Estimated value $0.00. {RECEIPT_FLAVOR}</div>
+                )}
+                {e.itemClass==="digital-asset" && (
+                  <div style={{fontSize:"10.5px",color:"#4aa8c9",fontStyle:"italic",marginBottom:"10px"}}>Estimated value: {DIGITAL_ASSET_VALUE}. Non-sellable, non-listable, non-contractible.</div>
+                )}
+                <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"8px 12px",marginBottom:"12px"}}>
+                  <div style={{fontSize:"9.5px",color:"#cf6a32",fontWeight:700,letterSpacing:"1px",marginBottom:"4px"}}>PROVENANCE</div>
+                  {(e.provenance||[]).length===0
+                    ? <div style={{fontSize:"9.5px",color:"#6a4a38",fontStyle:"italic"}}>no history (the asset has no past, only a future as a JPEG)</div>
+                    : (e.provenance||[]).map((p,i)=>(<div key={i} style={{fontSize:"9.5px",color:"#a9705a",lineHeight:1.5}}>— {p}</div>))}
+                </div>
+                <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+                  {e.itemClass==="digital-asset" ? (
+                    <button disabled title={DIGITAL_ASSET_SELL_TOOLTIP} style={{background:"#3a2010",border:"2px solid #5a4232",color:"#8a6a52",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>Sell</button>
+                  ) : (
+                    <button
+                      onClick={()=>v.marketInstantSell(e.id)}
+                      disabled={!sellable}
+                      title={sellable ? undefined : "Trade Hold: 8 days (0 hours elapsed). Purchases are decorative (§1)."}
+                      style={sellable
+                        ? {background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}
+                        : {background:"#3a2010",border:"2px solid #5a4232",color:"#8a6a52",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}
+                    >Instant Sell™ — {offer} BB</button>
+                  )}
+                  {e.itemClass==="market-grade" && (
+                    <button onClick={()=>v.marketStartAsk(e.id)} disabled={!v.mkSellable(e)} style={v.mkSellable(e)
+                      ? {background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}
+                      : {background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>List on Market</button>
+                  )}
+                  {e.itemClass==="market-grade" && (
+                    <button onClick={()=>v.contractToggle(e.id)} disabled={!contractOk} style={contractOk
+                      ? {background:"#3a2010",border:"1px dashed #a24ae2",color:"#d8b79b",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}
+                      : {background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>{inContract ? "✓ In contract selection" : "Add to Contract"}</button>
+                  )}
+                  <button onClick={v.closeInvDetail} style={{background:"none",border:"none",color:"#a9705a",fontSize:"10.5px",cursor:"pointer",textDecoration:"underline",padding:0,marginLeft:"auto"}}>close</button>
+                </div>
+                {e.itemClass!=="digital-asset" && <div style={{fontSize:"8.5px",color:"#6a4a38",marginTop:"6px"}}>{v.instantSellSub}</div>}
+                {v.marketAskFor===e.id && (
+                  <div style={{marginTop:"10px",background:"#0e0a06",border:"1px solid #7a3a1a",borderRadius:"6px",padding:"10px 12px"}}>
+                    <div style={{fontSize:"10px",color:"#a9705a",marginBottom:"6px"}}>Asking price (BB). On save: Listing Fee 5 BB + Maternal Gratuity 1 BB (non-refundable). Buyer Protection 7.3% is deducted from proceeds later.</div>
+                    <div style={{display:"flex",gap:"8px",flexWrap:"wrap"}}>
+                      <input type="number" min="1" value={v.marketAskInput} onChange={ev=>v.marketSetAsk(ev.target.value)} placeholder="asking (BB)" style={{flex:1,minWidth:"90px",background:"#1c0d06",border:"2px solid #7a3a1a",borderRadius:"6px",color:"#ffd9b3",fontSize:"12px",padding:"8px 10px"}} />
+                      <button onClick={v.marketConfirmAsk} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"11px",padding:"8px 12px",borderRadius:"6px",cursor:"pointer"}}>List it (−6 BB)</button>
+                      <button onClick={v.marketCancelAsk} style={{background:"#3a2010",border:"1px dashed #7a5a2a",color:"#a9705a",fontWeight:700,fontSize:"11px",padding:"8px 12px",borderRadius:"6px",cursor:"pointer"}}>Never mind</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
+
+        {v.marketCheckoutItem && (()=>{
+          const it = v.marketCheckoutItem;
+          const q = it.quote;
+          return (
+            <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:190,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={v.marketCloseCheckout}>
+              <div onClick={ev=>ev.stopPropagation()} style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ff5a14",borderRadius:"10px",maxWidth:"440px",width:"100%",padding:"24px",boxShadow:"0 0 60px rgba(255,80,20,0.4)"}}>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"4px"}}>CHECKOUT — {it.short}</div>
+                <div style={{fontSize:"10px",color:"#a9705a",marginBottom:"10px"}}>Estimate: {fmtUSD(q.est)} (baseline {it.estimatedValue}). {ESTIMATE_FOOTER}</div>
+                <div style={{background:"#0e0a06",border:"1px solid #3a1a0a",borderRadius:"6px",padding:"10px",fontSize:"10.5px",color:"#e8c9ac",lineHeight:1.8}}>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span>Asking (BB parity ×3, §8.9 volatility applied)</span><b>{q.base} BB</b></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span>Buyer Protection Fee — 7.3%</span><b>{q.buyerProtection} BB</b></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span>Escrow Handling — flat</span><b>{q.escrowHandling} BB</b></div>
+                  <div style={{display:"flex",justifyContent:"space-between"}}><span>Maternal Gratuity</span><b>{q.maternalGratuity} BB</b></div>
+                  <div style={{fontSize:"8.5px",color:"#6a4a38"}}>§8.9 rounding: player credits round down; fees round up ("also for you"). Maternal Gratuity is customary, not required, automatically applied.</div>
+                  <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px dashed #5a4232",marginTop:"4px",paddingTop:"4px",color:"#ffb347",fontWeight:900}}><span>TOTAL</span><span>{q.total} BB</span></div>
+                </div>
+                <div style={{fontSize:"9px",color:"#8a6a52",fontStyle:"italic",margin:"10px 0",lineHeight:1.5}}>{MARKET_OC_NOTICE} Item arrives immediately, stamped: {TRADE_HOLD_LABEL}. Purchases are decorative (§1) — only fake-won items can ever be sold or contracted.</div>
+                <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+                  <button onClick={()=>v.marketConfirmPurchase(it.id)} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 16px",borderRadius:"8px",cursor:"pointer"}}>Complete Purchase — {q.total} BB</button>
+                  <button onClick={v.marketCloseCheckout} style={{background:"#3a2010",border:"1px dashed #7a5a2a",color:"#a9705a",fontWeight:700,fontSize:"12px",padding:"11px 14px",borderRadius:"8px",cursor:"pointer"}}>Keep browsing</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         <button onClick={v.togglePanic} style={{position:"fixed",bottom:"20px",right:"20px",background:"#c92020",border:"3px solid #ffcfcf",color:"#fff",fontFamily:"'Bangers',cursive",fontSize:"14px",padding:"14px 18px",borderRadius:"50px",cursor:"pointer",zIndex:100,animation:"pulseGlow 2s infinite",boxShadow:v.momsGlow?"0 0 26px 8px rgba(255,213,74,0.85)":undefined}}>MOM'S HOME</button>
 
