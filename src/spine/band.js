@@ -21,7 +21,11 @@ export const BAND_PRIORITIES = { P0_SILENCE: 0, P1_CEREMONY: 1, P2_GAME: 2, P3_S
 const DUCK_FACTOR = 0.3;
 const LOG_CAP = 20;
 const MUTE_KEY = "hfes_muted";
-const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-win"]);
+const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-win",
+  // #42 (integration-2026 §3/§10.5): the trolley's win kinds — a net-negative
+  // verdict-win still celebrates (LDW disclosure pending), character-verdict
+  // carries the site's one (1) trumpet.
+  "verdict-win", "character-verdict"]);
 const LEAD_IN = 0.03;
 const DESPERATION_TEMPO = 1 / 1.15; // §5: BED tempo rises ~15%
 
@@ -280,6 +284,24 @@ const CUES = {
   "thunder": { dur: 3.0, make(t, v) { // the thunder, however, was free
     noise(ctx, layers[3], { t, gain: 0.16 * v, attack: 0.5, hold: 0.7, decay: 1.8, lp: 140 });
     tone(ctx, layers[3], { t: t + 0.1, f0: 58, f1: 36, glide: 2.2, gain: 0.12 * v, attack: 0.4, decay: 2.2, lp: 120 });
+  } },
+  // Moral Express (#42; integration-2026 §5: the stings ride the Band at P3 —
+  // service, not interruption. The one (1) trumpet is crash's shared cue.)
+  "trolley.title": { dur: 1.5, make(t, v) { // the title-card slam: rails humming, one industrial clack, a distant horn
+    tone(ctx, layers[3], { t, type: "sawtooth", f0: 98, f1: 196, glide: 1.1, gain: 0.07 * v, attack: 0.05, decay: 1.2, lp: 420, tremoloHz: 6, tremoloDepth: 0.3 });
+    click(ctx, layers[3], { t: t + 0.02, f0: 620, gain: 0.09 * v });
+    noise(ctx, layers[3], { t, gain: 0.035 * v, attack: 0.3, decay: 1.0, bp: 900, q: 1.2, filterSweepTo: 1600, glide: 0.9 });
+    tone(ctx, layers[3], { t: t + 0.5, f0: 233, gain: 0.045 * v, attack: 0.08, decay: 0.7, lp: 900, vibratoHz: 5, vibratoDepth: 4 });
+  } },
+  "trolley.verdict": { dur: 1.1, make(t, v) { // the verdict sting: the BASS family, polite about it
+    tone(ctx, layers[3], { t, f0: 130, f1: 65, glide: 0.5, gain: 0.1 * v, attack: 0.01, decay: 0.55, lp: 240 });
+    tone(ctx, layers[3], { t: t + 0.22, f0: 196, f1: 98, glide: 0.45, gain: 0.07 * v, attack: 0.012, decay: 0.5, lp: 300 });
+    noise(ctx, layers[3], { t, gain: 0.02 * v, attack: 0.01, decay: 0.4, lp: 700 });
+  } },
+  "trolley.third-track": { dur: 3.2, make(t, v) { // thunder's sibling, longer and lower — the house's private track (rain owns the original)
+    noise(ctx, layers[3], { t, gain: 0.17 * v, attack: 0.6, hold: 0.9, decay: 1.7, lp: 110 });
+    tone(ctx, layers[3], { t: t + 0.15, f0: 48, f1: 28, glide: 2.4, gain: 0.13 * v, attack: 0.5, decay: 2.4, lp: 100 });
+    tone(ctx, layers[3], { t: t + 1.2, type: "sawtooth", f0: 116, f1: 58, glide: 1.4, gain: 0.03 * v, attack: 0.3, decay: 1.4, lp: 340, tremoloHz: 5.5, tremoloDepth: 0.4 });
   } },
   // Header & economy (§2)
   "bb.debit": { dur: 0.35, make(t, v) { // polite debit: one muffled coin-swallow + soft whump. Almost kind.

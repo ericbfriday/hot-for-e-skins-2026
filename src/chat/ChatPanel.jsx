@@ -15,7 +15,7 @@ import {
   GRATUITY_LINE, GRATUITY_WAIVED_LINE, FLOOD_LINE_TEMPLATE, FLOOD_FINE_PRINT, COOLDOWN_CLICK_LINE,
   WHISPER_NOT_REPLYABLE_LINE, MOM_WHISPER_DECK, TIMEOUT_REASONS, TIMEOUT_DURATION_MS,
   TIMEOUT_AMBIENT_LINES, REDACTION_LINE, WIN_DELETE_LINE, WIN_BREATHE_LINES, MINOR_ESCALATION,
-  RAIN_INELIGIBLE_LINE, RAIN_KEYWORD_LINE, ONLINE_TOOLTIP,
+  RAIN_INELIGIBLE_LINE, RAIN_KEYWORD_LINE, ONLINE_TOOLTIP, TROLLEY_WINDOW_LINES,
 } from "./constants.js";
 import {
   loadFlags, markFlag, hasFlag, loadCooldownLevel, bumpCooldownLevel, cooldownSecondsForLevel,
@@ -23,7 +23,9 @@ import {
 } from "./state.js";
 
 const CAST = Object.fromEntries(RESERVED_CAST.map((c) => [c.name, c]));
-const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-win"]);
+// #42 (integration-2026 §3/§10.5): the trolley's win kinds join the win kinds —
+// the room gathers, MOD strikes it through, quiet window applies.
+const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-win", "verdict-win", "character-verdict"]);
 
 function playerTag() { return Identity.playerTag() || "you"; }
 
@@ -361,6 +363,16 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       addTimer(() => pushWhisper(MOM_WHISPER_DECK.abandoned), 400);
       addTimer(() => pushAmbientLine("she said no???"), 900);
       addTimer(() => pushCast("MOD_Chad_Official", "the responsible thing to do would've been yes."), 1500);
+    }));
+
+    // #42 Moral Express (spec §9): the room erupts when a dilemma opens and
+    // bets loudly through the window, all wrong. Personas first, MOD last
+    // (pile-on canon, integration-2026 §6). The DEPOSITOR.ai line that closes
+    // the mob arrives with the AI layer (#43) — the gap is deliberate.
+    offs.push(Bus.on(EVENTS.DILEMMA_OPENED, () => {
+      TROLLEY_WINDOW_LINES.forEach((line, i) => {
+        addTimer(() => pushEntry({ user: line.user, badge: line.badge, color: line.color, msg: line.msg }), 900 + i * 1400);
+      });
     }));
 
     offs.push(Bus.on(EVENTS.WITHDRAWAL_CREATED, () => {

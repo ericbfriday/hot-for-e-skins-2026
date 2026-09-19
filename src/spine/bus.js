@@ -26,6 +26,11 @@ export const EVENTS = {
   LIMIT_EVENT: "limit.event",
   RAIN_EVENT: "rain.event",
   MOMWEATHER_EVENT: "momweather.event",
+  // #42 Moral Express (integration-2026 §2): the trolley's two events. Wagered
+  // trolley bets additionally ride round.started/round.settled (surface
+  // "trolley", kinds verdict-win|verdict-loss|third-track|character-verdict).
+  DILEMMA_OPENED: "dilemma.opened",
+  DILEMMA_SETTLED: "dilemma.settled",
 };
 
 const listeners = new Map();

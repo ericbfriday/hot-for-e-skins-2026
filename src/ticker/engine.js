@@ -65,6 +65,12 @@ export const JUNK_TEMPLATES = [
   "{n} received a formal apology (fee: 1 BB)",
   "{n} broke even. A crowd gathered.",
   "{n} won a badge that cannot be shown (verification pending)",
+  // #42 Moral Express (spec §9 — ambient pool additions; the event-driven
+  // twins fire from the trolley controller with the real numbers)
+  "{n} bet the minority and was correct (net +1 BB (fees applied))",
+  "{n}'s conviction doubled into the Third Track (the Fund thanks them)",
+  "{n} requested a deliberation (the AI is always in)",
+  "the Utilitarian Fund now holds {bb} BB of best intentions (est. $0.00)",
 ];
 
 // House/cast lines (§2 tier 8%). Cast entries render with badge + cast color.
@@ -75,6 +81,8 @@ export const HOUSE_LINES = [
   { cast: "MOD_Chad_Official", text: "housekeeping: the ledger is bound and real (to us)" },
   { cast: "MOM", text: "is proud of today's depositors (maternally)" },
   { cast: "AdminTradeBot_69", text: "trades are a §6 concept" },
+  // #42 Moral Express (spec §9): the system shout, verbatim
+  { system: true, text: "THE TROLLEY CHOSE THE MANY. THE MANY STAKED MORE. (coincidence: pending)" },
 ];
 
 export const DEPOSIT_TRIUMPH_TEMPLATES = [
@@ -360,6 +368,14 @@ export function playerLineForSettled(p, tag) {
         return { ...you, text: "unboxed " + (item || "something") + " (withdrawal pending)", flourish: true, accent: rarityFor(item, p.kind) };
       }
       return { ...you, text: "defused a crate. A JPEG was awarded. Nobody won. (est.)" };
+    case "trolley":
+      // #42 Moral Express (spec §9 + §7 receipts): losses in the same deadpan
+      // third person as every other surface; the character verdict is the
+      // spec's verbatim +1 BB line.
+      if (p.kind === "character-verdict") return { ...you, text: "bet the minority and was correct (net +1 BB (fees applied))", flourish: true, accent: "#ffd54a" };
+      if (p.kind === "third-track") return { ...you, text: "fed " + price + " BB to the Utilitarian Fund (est. $0.00)" };
+      if (p.kind === "verdict-win") return { ...you, text: "called the trolley correctly. The house has opened an investigation (§5.3)", flourish: true, accent: "#8fd97a" };
+      return { ...you, text: "lost " + price + " BB to the trolley (as scheduled)" };
     default:
       if (Number.isFinite(p.netBB) && p.netBB < 0) return { ...you, text: "lost " + Math.abs(p.netBB) + " BB to the house (as scheduled)" };
       return { ...you, text: "played " + (GAME_LONG[p.surface] || "the house") + " (est.)" };

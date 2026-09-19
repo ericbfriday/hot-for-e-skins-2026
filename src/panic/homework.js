@@ -233,6 +233,7 @@ export const SURFACE_DISPLAY = {
   roulette: "Allowance Roulette",
   coinflip: "Skin Coinflip",
   crates: "Loot Crate Defuser",
+  trolley: "Moral Express deliberation", // #42: locked trolley bets are in-flight rounds (integration §5)
 };
 
 export function forfeitLineFor(surface) {

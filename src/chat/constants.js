@@ -126,6 +126,16 @@ export const RAIN_THANKS = "ty admin!!";
 export const RAIN_INELIGIBLE_LINE = "You were eligible for 0.0s of rain (rounded down, §8.9).";
 export const RAIN_KEYWORD_LINE = "Rain is region-locked (your region: no)";
 
+// #42 Moral Express (spec §9): during windows the room bets loudly, all wrong.
+// The DEPOSITOR.ai line is deliberately absent — that persona arrives with the
+// AI layer (ticket #43) and will close the mob per integration-2026 §6.
+// Order: personas first, MOD last (the pile-on canon).
+export const TROLLEY_WINDOW_LINES = [
+  { user: "Timmy_Second_Mortgage", color: "#e8c9ac", msg: "ALL IN ON SPLASH the trolley respects commitment" },
+  { user: "doomer_greg", color: "#8a7a9a", msg: "third track incoming. as scheduled 📉" },
+  { user: "MOD_Chad_Official", color: "#8fd97a", badge: "[MOD]", msg: "the AI has never been wrong (verification pending)" },
+];
+
 export const DEFAULT_NONRESPONSE = {
   who_asked: "who asked",
   win_misread: "W",
