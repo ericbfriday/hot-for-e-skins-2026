@@ -24,6 +24,7 @@ import {
   WHISPER_NOT_REPLYABLE_LINE, MOM_WHISPER_DECK, TIMEOUT_REASONS, TIMEOUT_DURATION_MS,
   TIMEOUT_AMBIENT_LINES, REDACTION_LINE, WIN_DELETE_LINE, WIN_BREATHE_LINES, MINOR_ESCALATION,
   RAIN_INELIGIBLE_LINE, RAIN_KEYWORD_LINE, ONLINE_TOOLTIP, TROLLEY_WINDOW_LINES, SKINCHAIN_CHAT_LINES,
+  FOUNDRY_CHAT_LINES,
 } from "./constants.js";
 import {
   loadFlags, markFlag, hasFlag, loadCooldownLevel, bumpCooldownLevel, cooldownSecondsForLevel,
@@ -134,6 +135,14 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     // the room waits for block one; DEPOSITOR.ai renders via the reserved cast.
     if (Math.random() < 0.05) {
       const line = SKINCHAIN_CHAT_LINES[Math.floor(Math.random() * SKINCHAIN_CHAT_LINES.length)];
+      if (line.cast) { pushCast(line.cast, line.msg); return; }
+      pushEntry({ user: line.user, color: line.color, msg: line.msg });
+      return;
+    }
+    // #45 AI Skin Foundry (foundry §7): the dreams' chat lines at low cadence —
+    // the room reacts to the renders; DEPOSITOR.ai analyzes the originals (est.).
+    if (Math.random() < 0.04) {
+      const line = FOUNDRY_CHAT_LINES[Math.floor(Math.random() * FOUNDRY_CHAT_LINES.length)];
       if (line.cast) { pushCast(line.cast, line.msg); return; }
       pushEntry({ user: line.user, color: line.color, msg: line.msg });
       return;

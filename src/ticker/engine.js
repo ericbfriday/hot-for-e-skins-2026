@@ -81,6 +81,13 @@ export const JUNK_TEMPLATES = [
   "{n} viewed their transaction on SkinChain™ (it was still there (pending))",
   "block 1 remains mood-dependent (day 847)",
   "{n} tipped 847 Grief (gratitude generated; position unchanged)",
+  // #45 AI Skin Foundry (spec §7 — ambient pool additions, verbatim): the
+  // dreams are original (est.), the remixes are novelty (est.), and the
+  // Undreamed keeps not being dreamed, one slot at a time.
+  "{n} dreamed Sentimental Retainer Core (derivative of everything, provably)",
+  "{n}'s dream was REMIXED for the 4th time (novelty: est.)",
+  "THE UNDREAMED remains undreamed ({n} was 1 slot away (the slot didn't move))",
+  "{n} received their First Dream™ free (subsequent dreams priced normally)",
 ];
 
 // House/cast lines (§2 tier 8%). Cast entries render with badge + cast color.
@@ -374,6 +381,15 @@ export function playerLineForSettled(p, tag) {
       }
       return { ...you, text: "crashed the College Fund (as scheduled)" };
     case "crates":
+      // #45: dreamed settles (integration-2026 §2 — key-defused + dreamed:true)
+      // render in the Foundry's voice: dreamed, derivative, provably.
+      if (p.dreamed) {
+        const nm = item && item.name ? item.name : "a dream";
+        if (p.kind === "junk-win" || p.kind === "jackpot" || p.kind === "legendary-win") {
+          return { ...you, text: "dreamed " + nm + " (originality: est. pending)", flourish: true, accent: rarityFor(item, p.kind) };
+        }
+        return { ...you, text: "dreamed " + nm + " (derivative of everything, provably)" };
+      }
       if (p.kind === "junk-win" || p.kind === "jackpot" || p.kind === "legendary-win") {
         return { ...you, text: "unboxed " + (item || "something") + " (withdrawal pending)", flourish: true, accent: rarityFor(item, p.kind) };
       }

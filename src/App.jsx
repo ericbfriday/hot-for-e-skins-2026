@@ -35,6 +35,21 @@ import {
   incrementPity, localDayKey, dayKeyBefore, CRATE_TICKER_TEMPLATES, CRATE_CHAT,
   SKIP_PRICE_BB, SKIP_STALL_EXTENSION_MS, SKIP_JUMP_PCT, SKIP_APPEARS_AT_PCT,
 } from "./games/crates.js";
+// #45 AI Skin Foundry (foundry spec; integration-2026 §1: "a crate variant
+// inside the existing games/crates idiom; the dream generator is pure +
+// seeded"). The renderer lives beside the pure engine; App owns the theater.
+import {
+  DREAM_KEY_PRICE_BB, DREAM_BUNDLES, dreamBundleReceiptLine, DREAM_PREMIUM_NOTE,
+  dreamDurationMs, buildDreamStages, WITHHELD_PROMPT_GAG, CONVERGED_CAPTION,
+  tokensRendered, generateDream, remixDream,
+  THE_UNDREAMED, UNDREAMED_TOAST, DREAM_ODDS_NOTE,
+  PROVENANCE_LINE, DREAM_WEAR_STAMP, DREAM_INSTANT_SELL_WALL, DREAM_LIST_WALL,
+  REMIX_TOAST, dreamInventoryExtras, dreamProvenanceLines,
+  foundryPityLabel, FOUNDRY_PITY_HEADER, FOUNDRY_PITY_FINE_PRINT,
+  FIRST_FREE_WAX_SEAL, FIRST_FREE_TOAST,
+  FOUNDRY_TICKER_TEMPLATES, FOUNDRY_CHAT,
+} from "./games/foundry.js";
+import DreamAsset, { UndreamedCard } from "./games/DreamAsset.jsx";
 import { Inventory } from "./games/inventory.js";
 import { pseudoHash12 } from "./games/fairness.js";
 import * as Roulette from "./games/roulette.js";
@@ -253,6 +268,15 @@ class App extends React.Component {
     cratePity:0, crateDupeIds:[], crateHeldCount:0,
     crateMomKeyClaimableToday:false, crateMomKeyStreak:0, crateEnvelope:null,
 
+    // #45 AI Skin Foundry — a SECOND CRATE inside the crate surface (the
+    // selector is DEFUSER ⇄ FOUNDRY; the ceremony state above is shared, the
+    // variant branches the vocabulary). Keys stack (bundles), the ladder
+    // counts dreams this session, and the dream ledger persists.
+    crateVariant:"defuser",
+    foundryKeys:0, foundryFreeKeys:0, foundrySessionDreams:0,
+    foundryDreamCount:0, foundryRemixCount:0, foundryFirstFreeClaimable:false,
+    foundryAward:null, foundryTokens:0, foundryFrameN:0, foundryPending:null,
+
     // Marketplace & Inventory (#27)
     invOpen:false, invDetailId:null, invAppeal:{id:null, step:0, closed:false},
     marketCheckout:null, marketFlicker:null, marketSig:"",
@@ -330,6 +354,19 @@ class App extends React.Component {
       crateMomKeyClaimableToday = lastDay !== todayKey;
     } catch (e) {}
 
+    // #45 Foundry ledger (spec §8): hfes_foundry_dreams / _remixes / _firstfree
+    // (identity-scoped claim stamp — the first dream is free once per identity,
+    // and a rerolled identity is, tragically for the house, a new identity).
+    let foundryDreamCount = 0, foundryRemixCount = 0, foundryFirstFreeClaimable = false;
+    try {
+      const d = parseInt(localStorage.getItem("hfes_foundry_dreams"), 10);
+      foundryDreamCount = Number.isFinite(d) && d >= 0 ? d : 0;
+      const r = parseInt(localStorage.getItem("hfes_foundry_remixes"), 10);
+      foundryRemixCount = Number.isFinite(r) && r >= 0 ? r : 0;
+      const ident = Identity.get();
+      foundryFirstFreeClaimable = !!ident.tag && localStorage.getItem("hfes_foundry_firstfree") !== ident.tag;
+    } catch (e) {}
+
     let oc = loadOC();
     let bonus = loadBonus();
     if (bonus && Date.now() >= bonus.expiresAt) {
@@ -343,6 +380,7 @@ class App extends React.Component {
       ident:Identity.get(), stats:Identity.getStats(),
       balanceOC:oc, bonusOC:bonus, streakChip: loadDepositStats().streak,
       cratePity, crateDupeIds, crateMomKeyStreak, crateMomKeyClaimableToday,
+      foundryDreamCount, foundryRemixCount, foundryFirstFreeClaimable,
       rouletteTurboUnlocked: loadDepositStats().ever,
       coinStashItem: Coinflip.pickStashItem(),
     });
@@ -363,7 +401,16 @@ class App extends React.Component {
         HouseBand.ocFuneral(); // three descending notes at the mood-change crossfade (audio-gags §2.6)
       }
     });
-    this._offIdent = Identity.subscribe(({identity, stats})=>this.setState({ident:identity, stats}));
+    this._offIdent = Identity.subscribe(({identity, stats})=>{
+      this.setState({ident:identity, stats});
+      // #45: the First Dream™ valve is identity-scoped — a rerolled identity
+      // is a new identity (she doesn't check either), so the envelope re-arms.
+      if (identity.tag) {
+        let claimable = false;
+        try { claimable = localStorage.getItem("hfes_foundry_firstfree") !== identity.tag; } catch (e) {}
+        if (claimable !== this.state.foundryFirstFreeClaimable) this.setState({foundryFirstFreeClaimable:claimable});
+      }
+    });
     Mood.init();
     this._offDeposit = Bus.on(EVENTS.DEPOSIT_COMPLETED, (p)=>{
       if (p.firstEver) {
@@ -929,6 +976,9 @@ class App extends React.Component {
       // #32: crash settles carry the multiplier so ticker lines can cite the
       // schedule (additive; other surfaces omit it).
       mult: typeof extra.mult === "number" ? extra.mult : undefined,
+      // #45 (integration-2026 §2): Foundry dreams settle as key-defused with
+      // the dreamed payload flag — kinds stay scarce; the flag branches voice.
+      dreamed: extra.dreamed === true ? true : undefined,
       itemAward: extra.itemAward || null,
       nearMissItem: extra.nearMissItem || null,
       streakAfter: { site: (this.state.stats && this.state.stats.lossStreak) || 0, surface: extra.surfaceStreak || 0 },
@@ -1433,6 +1483,9 @@ class App extends React.Component {
   }
   openCrate(){
     if (this.state.crateOpening || !this.state.crateKeyBought) return;
+    // #45: the armed key routes by variant — the Defuser defuses, the Foundry
+    // dreams. Same ceremony spine, same unskippable ledger entry.
+    if (this.state.crateVariant === "foundry") { this._foundryStart(); return; }
     // #31: the Rebound Crate starts at the 28.0s session cap — the locks rusted
     // while you were gone (retention spec §3).
     const totalMs = this._crateRebound ? CRATE_CAP_SECONDS*1000 : defuseDurationMs(this.state.crateSessionOpened);
@@ -1453,7 +1506,9 @@ class App extends React.Component {
     this.setState({crateStage:seg.key, crateCaption:seg.caption});
     if (seg.type === "hold") {
       this.setState({crateProgress:seg.at});
-      Bus.emit(EVENTS.ROUND_BEAT, {surface:"crates", roundId:this._crateRound, beat: seg.key === "stallB" ? "drop" : "stall"});
+      // The one hold in either ceremony is the drop: the Defuser's THE DROP and
+      // the Foundry's THE LATENCY both land on the BASS (the Band knows both).
+      Bus.emit(EVENTS.ROUND_BEAT, {surface:"crates", roundId:this._crateRound, beat: seg.key === "stallB" || seg.key === "latency" ? "drop" : "stall"});
       clearTimeout(this._crateStageTimer);
       this._crateStageTimer = setTimeout(()=>this._crateRunStage(idx+1), seg.ms);
       return;
@@ -1466,7 +1521,17 @@ class App extends React.Component {
       const val = from + (to - from) * p;
       this.setState(s=>{
         const patch = {crateProgress:val};
-        if (seg.key === "lock1" && val >= SKIP_APPEARS_AT_PCT && !s.crateSkipUsed && !s.crateSkipAvailable) patch.crateSkipAvailable = true;
+        // Skip arms mid-first-move in either ceremony (lock1 / the RENDERING
+        // pass) — the gag transfers verbatim.
+        if ((seg.key === "lock1" || seg.key === "render") && val >= SKIP_APPEARS_AT_PCT && !s.crateSkipUsed && !s.crateSkipAvailable) patch.crateSkipAvailable = true;
+        // #45 RENDERING (tokens): the token counter streams, and the model
+        // renders a beautiful frame, shudders, and renders it again identically
+        // at 40% and 70% ("converged early (the model is decisive)").
+        if (seg.key === "render") {
+          patch.foundryTokens = tokensRendered(val, s.foundryPending);
+          const frameN = val >= 70 ? 2 : (val >= 40 ? 1 : 0);
+          if (frameN !== s.foundryFrameN) patch.foundryFrameN = frameN;
+        }
         return patch;
       });
       if (p >= 1) {
@@ -1481,11 +1546,15 @@ class App extends React.Component {
     this.setState(s=>({
       crateProgress:Math.min(100, s.crateProgress+SKIP_JUMP_PCT), crateSkipUsed:true, crateSkipAvailable:false,
     }));
-    if (this._crateStages && this._crateStages[3]) this._crateStages[3].ms += SKIP_STALL_EXTENSION_MS;
+    // #45: the Skip extends THE hold — stallB (Defuser) or THE LATENCY
+    // (Foundry) — whichever ceremony is running. +7% displayed, +2s real.
+    const hold = this._crateStages && this._crateStages.find(x=>x.type==="hold");
+    if (hold) hold.ms += SKIP_STALL_EXTENSION_MS;
     this.toast("Skip confirmed — ETA improved");
   }
   _crateDefuseComplete(){
     clearInterval(this._crateMoveInt); clearTimeout(this._crateStageTimer);
+    if (this.state.crateVariant === "foundry") { this._foundryReelStart(); return; }
     const award = pickAward();
     this._crateAwardPending = award;
     const initial = buildReelStrip(award, false);
@@ -1536,6 +1605,139 @@ class App extends React.Component {
     const template = CRATE_TICKER_TEMPLATES[Math.floor(Math.random()*CRATE_TICKER_TEMPLATES.length)];
     this.pushTicker(template.replace("{n}", tag));
     this.pushChat(CRATE_CHAT[Math.floor(Math.random()*CRATE_CHAT.length)]);
+  }
+
+  // ---- AI Skin Foundry (#45; foundry spec §1–§6) -------------------------------
+  // A second crate inside the crate surface: same ceremony spine, same Pity
+  // Meter (one counter — integration-2026 §10.3), its own key price, ladder
+  // counter, and award class. Dreams settle as key-defused + dreamed:true
+  // (integration-2026 §2); free dreams settle wagered:false and move nothing
+  // but feelings (§3).
+  setCrateVariant(variant){
+    if (this.state.crateOpening || this.state.crateKeyBought) return; // mid-ceremony, the crate chooses you
+    this.setState({crateVariant});
+  }
+  foundryBuyKeys(bundleIdx){
+    const bundle = bundleIdx == null ? null : DREAM_BUNDLES[bundleIdx];
+    const price = bundle ? bundle.priceBB : DREAM_KEY_PRICE_BB;
+    if (!this.payBB(price, "foundry-key")) return; // insufficient BB routes to Ask-Mom per canon (label swap at the button)
+    const keys = bundle ? bundle.keys : 1;
+    this.setState(s=>({foundryKeys:s.foundryKeys+keys}));
+    this.toast(bundle
+      ? dreamBundleReceiptLine(bundle)
+      : "Dream Key received — "+DREAM_KEY_PRICE_BB+" BB ("+DREAM_PREMIUM_NOTE+").");
+  }
+  foundryArmKey(free){
+    if (this.state.crateOpening || this.state.crateKeyBought) return;
+    if (free) {
+      if (this.state.foundryFreeKeys <= 0) return;
+      this.setState(s=>({foundryFreeKeys:s.foundryFreeKeys-1, crateKeyBought:true}));
+      this._foundryWagered = false; // the First Dream™ is a free round: no streak, no vault feed, no XP
+    } else {
+      if (this.state.foundryKeys <= 0) return;
+      this.setState(s=>({foundryKeys:s.foundryKeys-1, crateKeyBought:true}));
+      this._foundryWagered = true;
+    }
+    this._crateRound = this.nextRoundId();
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"crates", roundId:this._crateRound, priceBB: this._foundryWagered ? DREAM_KEY_PRICE_BB : 0, wagered:this._foundryWagered});
+  }
+  // §1 free valve: once per identity, delivered via the standard MOM envelope
+  // machinery, wax seal UTILIMOM™ — queued LAST behind Consolation/Comeback/
+  // Mom keys (integration-2026 §6, envelope serialization canon, extended).
+  claimFirstDream(){
+    if (!this.state.foundryFirstFreeClaimable) return;
+    const tag = this.state.ident ? (this.state.ident.custom || this.state.ident.tag) : null;
+    const stamp = this.state.ident ? this.state.ident.tag : "";
+    try { localStorage.setItem("hfes_foundry_firstfree", stamp); } catch (e) {}
+    this.setState(s=>({foundryFirstFreeClaimable:false, foundryFreeKeys:s.foundryFreeKeys+1}));
+    this.toast(FIRST_FREE_TOAST);
+    if (tag) this.pushTicker("{n} received their First Dream™ free (subsequent dreams priced normally)".replace("{n}", tag));
+  }
+  _foundryStart(){
+    // The dream is decided before the animation begins (§4.2 — the ceremony is
+    // a reenactment): dream #(count+1) of today, deterministic forever.
+    const dream = generateDream(this.state.foundryDreamCount + 1);
+    const totalMs = dreamDurationMs(this.state.foundrySessionDreams);
+    this._crateStages = buildDreamStages(totalMs, 0);
+    this.setState({
+      crateOpening:true, crateProgress:0, crateStage:"slam", crateCaption:this._crateStages[0].caption,
+      crateSkipAvailable:false, crateSkipUsed:false, crateResult:null, crateRevealPhase:null,
+      crateAward:null, crateReel:null, foundryAward:null, crateInspectOpen:false,
+      foundryPending:dream, foundryTokens:0, foundryFrameN:0,
+    });
+    HouseBand.play("crates.open", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+    this._crateRunStage(0);
+  }
+  // §2 beat 4: snap → the gallery reel (3.2s). The Undreamed™ sits in the
+  // pre-landing slot every time — and unlike the Fruit Roll-Up it does NOT
+  // scoot ("the slot didn't move"); instead the reel re-renders identically
+  // (converged early), which is the same gag wearing a hoodie.
+  _foundryReelStart(){
+    const dream = this.state.foundryPending;
+    if (!dream) return;
+    const strip = [];
+    const landingIndex = 9;
+    for (let i = 0; i < 12; i++) {
+      if (i === landingIndex) strip.push(dream);
+      else if (i === landingIndex - 1) strip.push(THE_UNDREAMED);
+      else strip.push(generateDream(1000 + Math.floor(Math.random() * 8) + i)); // dreaming frames: filler dreams, also dreamed
+    }
+    this.setState({crateProgress:100, crateReel:{strip, landingIndex, rerendered:false}, crateRevealPhase:"reel"});
+    Bus.emit(EVENTS.ROUND_BEAT, {surface:"crates", roundId:this._crateRound, beat:"recalibration"});
+    clearTimeout(this._crateRevealTimer1); clearTimeout(this._crateRevealTimer2);
+    this._crateRevealTimer1 = setTimeout(()=>{
+      this.setState(s=>({crateReel: s.crateReel ? {...s.crateReel, rerendered:true} : s.crateReel}));
+    }, 2300);
+    this._crateRevealTimer2 = setTimeout(()=>this._foundryFinish(dream), 3200);
+  }
+  _foundryFinish(dream){
+    const wagered = !!this._foundryWagered;
+    const roundId = this._crateRound;
+    // §4: a duplicate doesn't recycle — it REMIXES. Dupe = the same base dream
+    // already held (baseName survives remix suffixes); the remix ordinal is the
+    // copy count. There is no duplicate protection; there is duplicate rebranding.
+    const held = Inventory.list().filter(e=>e.dreamed && e.baseName === dream.name);
+    const isRemix = held.length > 0;
+    const final = isRemix ? remixDream(dream, held.length) : dream;
+    const pityRes = incrementPity(this.state.cratePity); // ONE meter, third label (§5)
+    const entry = Inventory.award({id: final.id + "-c", name: final.name, value: final.value, source: "foundry", dreamed: true});
+    Inventory.update(entry.id, dreamInventoryExtras(final));
+    for (const line of dreamProvenanceLines(final)) Inventory.appendProvenance(entry.id, line);
+    const dreamCount = this.state.foundryDreamCount + 1;
+    const remixCount = this.state.foundryRemixCount + (isRemix ? 1 : 0);
+    try {
+      localStorage.setItem("hfes_foundry_dreams", String(dreamCount));
+      localStorage.setItem("hfes_foundry_remixes", String(remixCount));
+    } catch (e) {}
+    const kind = kindForTier(final.baseTier);
+    this.setState({
+      crateOpening:false, crateKeyBought:false, crateRevealPhase:"award",
+      crateAward:{id: final.id, name: final.name, tier: final.tier, value: final.value},
+      foundryAward:final, foundryPending:null, foundryFrameN:0,
+      cratePity:pityRes.value, foundryDreamCount:dreamCount, foundryRemixCount:remixCount,
+      foundrySessionDreams:this.state.foundrySessionDreams+1,
+      crateResult: isRemix
+        ? REMIX_TOAST + " — " + final.name + " · Cash Value (est.): $0.00"
+        : "Added to Inventory · Digital Asset (Dreamed) · Cash Value (est.): $0.00 — " + final.name,
+    });
+    this.settleRound("crates", roundId, kind, {
+      wagered, priceBB: wagered ? DREAM_KEY_PRICE_BB : 0,
+      netBB: wagered ? -DREAM_KEY_PRICE_BB : 0,
+      itemAward: {id: final.id, name: final.name, tier: final.tier, value: final.value},
+      nearMissItem: THE_UNDREAMED, dreamed: true,
+    });
+    // §4 vault ruling: dream keys feed +0.2/key, identical to crate keys — the
+    // crates-surface settle carries it; free dreams feed nothing.
+    this._crateRakebackLine = wagered ? Vault.receiptLine(0.2) : null;
+    HouseBand.play(kind === "legendary-win" || kind === "jackpot" ? "crates.legendary" : "crates.reveal", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+    this.toast(UNDREAMED_TOAST);
+    if (isRemix) this.toast(REMIX_TOAST);
+    if (pityRes.recalibrated) this.toast("PITY METER RECALIBRATED (mood improved!) (§8.9)");
+    if (confettiEligible(final.baseTier)) this.confetti();
+    const tag = this.playerTagOrYou();
+    const template = FOUNDRY_TICKER_TEMPLATES[Math.floor(Math.random()*FOUNDRY_TICKER_TEMPLATES.length)];
+    this.pushTicker(template.replace("{n}", tag));
+    this.pushChat(FOUNDRY_CHAT[Math.floor(Math.random()*FOUNDRY_CHAT.length)]);
   }
 
   // ---- Marketplace & Inventory (#27) ----
@@ -1647,7 +1849,7 @@ class App extends React.Component {
   contractRun(){
     const sel = [...this.state.contractSel];
     const preview = Market.contractPreview(sel);
-    if (!preview) { this.toast("Trade-Up Contract: requires 5 same-tier Market-Grade items (JPEGs, listed items, and trade-held items don't count)."); return; }
+    if (!preview) { this.toast("Trade-Up Contract: requires 5 same-tier Market-Grade items, or 5 same-tier Dreamed Assets (JPEGs, listed items, and trade-held items don't count; dreams and JPEGs don't mix)."); return; }
     if (!this.payBB(Market.contractFeeTotal(), "trade-up-contract")) return; // 5 BB origination + 1 BB gratuity
     this.setState({ contractPhase:"reel", contractScoot:false, contractResult:null });
     clearTimeout(this._contractT);
@@ -1656,7 +1858,11 @@ class App extends React.Component {
       const res = Market.tradeUpOutcome(sel);
       this.setState({ contractPhase:"done", contractResult:res, contractSel:[] });
       if (res.ok) {
-        this.toast(res.kind === "photograph" ? res.note : "Contract fulfilled: " + res.name + " (float " + res.float.toFixed(10) + "). " + res.statTrakNote + ".");
+        // #45: dreamed contracts fulfill with a dream — no float, no StatTrak,
+        // just the cheapest dream of the next tier and its $0.00 forever.
+        this.toast(res.kind === "photograph" ? res.note
+          : res.kind === "dream" ? "Contract fulfilled: " + res.name + " (" + res.note + "). Cash Value (est.): $0.00."
+          : "Contract fulfilled: " + res.name + " (float " + res.float.toFixed(10) + "). " + res.statTrakNote + ".");
         this.pushTicker(this.playerTagOrYou() + " traded five regrets for " + (res.kind === "photograph" ? "a complementary photograph" : res.name));
       }
     }, 2700);
@@ -1704,11 +1910,19 @@ class App extends React.Component {
     this.setState({balanceBB:nb}); this.saveBalance(nb);
     Bus.emit(EVENTS.BB_CREDITED, {amount, reason:"askmom-conversion", balanceBB: nb});
     const surface = this.pendingReplay;
-    if (surface && nb >= GAME_PRICES_BB[surface]) {
+    // #45: the Top Up & Play Again replay follows the variant — a foundry
+    // rebuy needs a dream key (20 BB), not a defuser key (the house knows
+    // which room you were crying in).
+    const replayNeed = surface === "crates" && this.state.crateVariant === "foundry" ? DREAM_KEY_PRICE_BB : GAME_PRICES_BB[surface];
+    if (surface && Number.isFinite(replayNeed) && nb >= replayNeed) {
       this.pendingReplay = null;
       clearTimeout(this._creditReplayTimer);
       const fn = {roulette:this.playRoulette, coinflip:this.playCoinflip, crash:this.startCrash, crates:this.buyKey}[surface];
-      if (fn) this._creditReplayTimer = setTimeout(()=>fn.call(this), 700);
+      if (surface === "crates" && this.state.crateVariant === "foundry") {
+        this._creditReplayTimer = setTimeout(()=>this.foundryBuyKeys(null), 700);
+      } else if (fn) {
+        this._creditReplayTimer = setTimeout(()=>fn.call(this), 700);
+      }
     }
   }
   convertOC(ocAmount, bbAmount){
@@ -2129,7 +2343,11 @@ class App extends React.Component {
       replayRoulette: s.rouletteResult && bb < GAME_PRICES_BB.roulette, topUpAndPlayRoulette:()=>this.topUpAndPlay("roulette"),
       replayCoinflip: s.coinResult && bb < GAME_PRICES_BB.coinflip, topUpAndPlayCoinflip:()=>this.topUpAndPlay("coinflip"),
       replayCrash: s.crashPhase==="crashed" && bb < GAME_PRICES_BB.crash, topUpAndPlayCrash:()=>this.topUpAndPlay("crash"),
-      replayCrates: !s.crateOpening && !s.crateKeyBought && s.crateFreeKeyCount<=0 && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
+      // #45: the rebuy nudge is variant-aware — dream keys cost 20 and the
+      // foundry's own key stacks count.
+      replayCrates: !s.crateOpening && !s.crateKeyBought && bb < (s.crateVariant==="foundry" ? DREAM_KEY_PRICE_BB : GAME_PRICES_BB.crates)
+        && (s.crateVariant==="foundry" ? (s.foundryKeys<=0 && s.foundryFreeKeys<=0) : s.crateFreeKeyCount<=0),
+      topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
       chatHooks: {
@@ -2238,6 +2456,28 @@ class App extends React.Component {
       momKeyMatte: (s.retention||Retention.get()).attendance.matte,
       momKeyBoxLabel: (s.retention||Retention.get()).attendance.matte ? "Premium Mom Crate (Matte)" : "MOM (envelope)",
       crateEnvelope:s.crateEnvelope, dismissCrateEnvelope:()=>this.dismissCrateEnvelope(),
+
+      // #45 AI Skin Foundry — the second crate inside this surface. The pity
+      // label/header swap with the variant (ONE meter, three labels); the key
+      // money and envelopes are Foundry-owned.
+      crateVariant:s.crateVariant, setCrateVariant:(v)=>this.setCrateVariant(v),
+      foundryKeys:s.foundryKeys, foundryFreeKeys:s.foundryFreeKeys,
+      foundryDreamCount:s.foundryDreamCount, foundryRemixCount:s.foundryRemixCount,
+      foundryFirstFreeClaimable:s.foundryFirstFreeClaimable, claimFirstDream:()=>this.claimFirstDream(),
+      foundryBuySingle:()=>this.foundryBuyKeys(null), foundryBuyBundle:(i)=>this.foundryBuyKeys(i),
+      foundryDreamBundles:DREAM_BUNDLES, dreamKeyPrice:DREAM_KEY_PRICE_BB,
+      foundryArmKey:(free)=>this.foundryArmKey(free),
+      foundryBtnAskMom: s.foundryKeys<=0 && s.foundryFreeKeys<=0 && bb < DREAM_KEY_PRICE_BB,
+      foundryOpenLabel: s.crateOpening ? "Rendering... (unskippable)" : "BEGIN THE DREAM",
+      foundryAward:s.foundryAward, foundryPending:s.foundryPending,
+      foundryTokens:s.foundryTokens, foundryFrameN:s.foundryFrameN,
+      foundryPityLabel: foundryPityLabel(s.cratePity),
+      foundryPityHeader: FOUNDRY_PITY_HEADER, foundryPityFinePrint: FOUNDRY_PITY_FINE_PRINT,
+      foundryOddsNote: DREAM_ODDS_NOTE,
+      withheldPromptGag: WITHHELD_PROMPT_GAG, convergedCaption: CONVERGED_CAPTION,
+      firstFreeWaxSeal: FIRST_FREE_WAX_SEAL, theUndreamed: THE_UNDREAMED, undreamedToast: UNDREAMED_TOAST,
+      dreamInstantSellWall: DREAM_INSTANT_SELL_WALL, dreamListWall: DREAM_LIST_WALL,
+      dreamWearStamp: DREAM_WEAR_STAMP, provenanceLine: PROVENANCE_LINE,
 
       // Retention mechanics (#31)
       attendChip: (()=>{ const a = (s.retention||Retention.get()).attendance;
@@ -2948,9 +3188,27 @@ class App extends React.Component {
 
                 {v.isCrates && (
                   <div>
-                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:"#ffb347",marginBottom:"6px"}}>Loot Crate Defuser</div>
-                    <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"4px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes. {v.crateOddsNote} <span style={{fontSize:"8px"}}>(Full table available on request. Requests are mood-dependent.)</span></div>
-                    <div style={{fontSize:"8.5px",color:"#6a4a38",marginBottom:"12px"}}>{v.cratePityFinePrint} · {v.crateOddsFinePrint}</div>
+                    {/* #45: the crate selector — LOOT CRATE DEFUSER ⇄ THE FOUNDRY
+                        (one surface, two crates; mid-ceremony the crate chooses you) */}
+                    <div style={{display:"flex",alignItems:"center",gap:"12px",flexWrap:"wrap",marginBottom:"6px"}}>
+                      <div style={{fontFamily:"'Bangers',cursive",fontSize:"20px",color:v.crateVariant==="foundry"?"#a24ae2":"#ffb347"}}>
+                        {v.crateVariant==="foundry" ? "AI SKIN FOUNDRY™" : "Loot Crate Defuser"}
+                      </div>
+                      <button onClick={()=>v.setCrateVariant(v.crateVariant==="defuser"?"foundry":"defuser")} disabled={v.crateOpening||v.crateKeyBought}
+                        style={{background:v.crateOpening||v.crateKeyBought?"#2a1408":"#2a1040",border:"1px dashed #a24ae2",color:v.crateOpening||v.crateKeyBought?"#6a4a38":"#d8b7ff",fontWeight:800,fontSize:"10.5px",padding:"6px 12px",borderRadius:"6px",cursor:v.crateOpening||v.crateKeyBought?"not-allowed":"pointer"}}>
+                        {v.crateVariant==="defuser" ? "⇄ THE FOUNDRY (dreams, est.)" : "⇄ LOOT CRATE DEFUSER (JPEGs, real)"}
+                      </button>
+                    </div>
+                    {v.crateVariant==="foundry" ? (
+                      <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"4px"}}>{v.foundryPityLabel} — {v.foundryPityHeader} · Dreams: {v.foundryDreamCount} (remixes: {v.foundryRemixCount}) · {v.foundryOddsNote} <span style={{fontSize:"8px"}}>(The model was in a mood. The mood is disclosed.)</span></div>
+                    ) : (
+                      <div style={{fontSize:"10.5px",color:"#a9705a",marginBottom:"4px"}}>{v.cratePityLabel} · Inventory: {v.crateInventoryCount} JPEGs (Non-Tradeable) · Odds: yes. {v.crateOddsNote} <span style={{fontSize:"8px"}}>(Full table available on request. Requests are mood-dependent.)</span></div>
+                    )}
+                    <div style={{fontSize:"8.5px",color:"#6a4a38",marginBottom:"12px"}}>
+                      {v.crateVariant==="foundry"
+                        ? <>{v.foundryPityFinePrint} · same seed → same dream, forever (determinism is the provenance, §4.2)</>
+                        : <>{v.cratePityFinePrint} · {v.crateOddsFinePrint}</>}
+                    </div>
 
                     {v.crateEnvelope && v.crateEnvelope.kind==="consolation" && (
                       <div style={{marginBottom:"12px",background:"#241005",border:"1px dashed #ffd54a",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
@@ -2974,12 +3232,54 @@ class App extends React.Component {
                       </div>
                     )}
 
-                    <div style={{display:"flex",gap:"24px",alignItems:"center",flexWrap:"wrap"}}>
-                      <div key={v.momKeyBoxLabel} style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:v.momKeyMatte?"3px solid #ffd54a":"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim,boxShadow:v.momKeyMatte?"0 0 18px rgba(255,213,74,0.45)":"none"}}>
-                        <div style={{position:"absolute",inset:"30% 0",height:"14px",background:v.momKeyMatte?"#ffd54a":"#7a5a2a"}}></div>
+                    {/* #45 First Dream Free™ (foundry §1): once per identity, via the
+                        standard MOM envelope machinery — and QUEUED LAST behind
+                        Consolation/Comeback/Mom keys (integration-2026 §6: envelope
+                        serialization canon, extended by one). Wax seal: UTILIMOM™. */}
+                    {v.crateVariant==="foundry" && v.foundryFirstFreeClaimable && (
+                      <div style={{marginBottom:"12px",background:"#1a0a24",border:"1px dashed #a24ae2",borderRadius:"6px",padding:"9px 12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px",flexWrap:"wrap",animation:"envDrop 0.7s ease-out"}}>
+                        <span style={{fontSize:"11.5px",color:"#d8b7ff"}}>MOM (envelope, queued last (there was a line)) — wax seal: {v.firstFreeWaxSeal}. First Dream Free™: the first one is complimentary (they always are, see §4.5).</span>
+                        <button onClick={v.claimFirstDream} style={{background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"11.5px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Claim First Dream Free™</button>
                       </div>
+                    )}
+
+                    <div style={{display:"flex",gap:"24px",alignItems:"center",flexWrap:"wrap"}}>
+                      {v.crateVariant==="foundry" ? (
+                        /* #45: the Foundry crate — the same box, purple, humming
+                           (the electricity is est.) */
+                        <div style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#2a1442,#2a1442 10px,#180a2c 10px,#180a2c 20px)",border:"3px solid #a24ae2",borderRadius:"6px",position:"relative",animation:v.crateAnim,boxShadow:"0 0 18px rgba(162,74,226,0.4)"}}>
+                          <div style={{position:"absolute",top:"18px",left:"14px",right:"14px",height:"6px",background:"#7fd4ff",opacity:0.5}}></div>
+                          <div style={{position:"absolute",top:"28px",left:"14px",right:"14px",height:"6px",background:"#7fd4ff",opacity:0.3}}></div>
+                          <div style={{position:"absolute",inset:"52% 0",height:"14px",background:"#a24ae2"}}></div>
+                        </div>
+                      ) : (
+                        <div key={v.momKeyBoxLabel} style={{width:"120px",height:"100px",background:"repeating-linear-gradient(90deg,#4a3a1a,#4a3a1a 10px,#3a2a10 10px,#3a2a10 20px)",border:v.momKeyMatte?"3px solid #ffd54a":"3px solid #7a5a2a",borderRadius:"6px",position:"relative",animation:v.crateAnim,boxShadow:v.momKeyMatte?"0 0 18px rgba(255,213,74,0.45)":"none"}}>
+                          <div style={{position:"absolute",inset:"30% 0",height:"14px",background:v.momKeyMatte?"#ffd54a":"#7a5a2a"}}></div>
+                        </div>
+                      )}
                       <div style={{flex:1,minWidth:"220px"}}>
-                        {!v.crateKeyBought && !v.crateOpening && (
+                        {!v.crateKeyBought && !v.crateOpening && (v.crateVariant==="foundry" ? (
+                          /* #45: dream keys stack (bundles); the First Dream is free;
+                             insufficient BB routes to Ask-Mom per canon (§1). */
+                          <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
+                            {v.foundryFreeKeys>0 && (
+                              <button onClick={()=>v.foundryArmKey(true)} style={{background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>Use First Dream Free™ ({v.foundryFreeKeys})</button>
+                            )}
+                            {v.foundryKeys>0 ? (
+                              <button onClick={()=>v.foundryArmKey(false)} style={{background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>DREAM ({v.foundryKeys} key{v.foundryKeys>1?"s":""} held)</button>
+                            ) : v.foundryBtnAskMom ? (
+                              <button onClick={()=>this.openAskMom({source:"crates"})} style={{background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>Ask Mom for Dream Money</button>
+                            ) : (
+                              <>
+                                <button onClick={v.foundryBuySingle} style={{background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>Single Dream Key ({v.dreamKeyPrice} BB)</button>
+                                <button onClick={()=>v.foundryBuyBundle(0)} style={{background:"#2a1040",border:"1px dashed #a24ae2",color:"#d8b7ff",fontWeight:800,fontSize:"11px",padding:"10px 14px",borderRadius:"8px",cursor:"pointer"}}>5-Pack ({v.foundryDreamBundles[0].priceBB} BB)</button>
+                                <button onClick={()=>v.foundryBuyBundle(1)} style={{background:"#2a1040",border:"1px dashed #a24ae2",color:"#d8b7ff",fontWeight:800,fontSize:"11px",padding:"10px 14px",borderRadius:"8px",cursor:"pointer"}}>20-Pack ({v.foundryDreamBundles[1].priceBB} BB)</button>
+                              </>
+                            )}
+                            {/* #43 AI Advice™ — foundry pre-dream (the recommendation is the more expensive key) */}
+                            <AdviceChip surface="crates" onAnalysis={v.aiAnalysisNote} onRecommend={v.foundryBtnAskMom ? ()=>this.openAskMom({source:"crates"}) : v.foundryBuyBundle(1)} />
+                          </div>
+                        ) : (
                           <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
                             {v.crateFreeKeyCount>0 && (
                               <button onClick={v.useFreeKey} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>Use Free Key ({v.crateFreeKeyCount})</button>
@@ -2988,11 +3288,49 @@ class App extends React.Component {
                             {/* #43 AI Advice™ — crate pre-defuse */}
                             <AdviceChip surface="crates" onAnalysis={v.aiAnalysisNote} onRecommend={v.buyKey} />
                           </div>
-                        )}
+                        ))}
                         {v.crateKeyBought && !v.crateOpening && (
-                          <button onClick={v.openCrate} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateOpenLabel}</button>
+                          <button onClick={v.openCrate} style={v.crateVariant==="foundry"
+                            ? {background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}
+                            : {background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateVariant==="foundry" ? v.foundryOpenLabel : v.crateOpenLabel}</button>
                         )}
-                        {v.crateOpening && v.crateRevealPhase!=="reel" && v.crateRevealPhase!=="award" && (
+                        {v.crateOpening && v.crateRevealPhase!=="reel" && v.crateRevealPhase!=="award" && (v.crateVariant==="foundry" ? (
+                          /* #45: the dream ceremony — rendering, not defusing. Prompt
+                              slam (0–8%), RENDERING (tokens) (8→89%) with the beautiful-
+                              frame shudder, THE LATENCY pinned at 89%, upscale, snap. */
+                          <>
+                            <div style={{fontSize:"12px",color:"#c9a5ff",fontWeight:700,marginBottom:"4px"}}>{v.crateCaption}</div>
+                            {v.crateStage==="slam" && (
+                              <div style={{marginBottom:"6px"}}>
+                                <div style={{fontSize:"9px",color:"#7fd4ff",fontStyle:"italic"}}>{v.withheldPromptGag}</div>
+                                <div key={v.foundryPending ? v.foundryPending.receipt : "slam"} style={{fontSize:"8px",color:"#cfe4ff",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",animation:"dreamPromptFlash 0.9s linear"}}>
+                                  {v.foundryPending ? "prompt: \""+v.foundryPending.prompt+"\"" : ""}
+                                </div>
+                              </div>
+                            )}
+                            <div style={{background:"#0e0a06",borderRadius:"5px",height:"8px",overflow:"hidden"}}>
+                              <div style={{height:"100%",width:`${v.crateProgress}%`,background:"linear-gradient(90deg,#7fd4ff,#a24ae2)",transition:"width 0.1s linear"}}></div>
+                            </div>
+                            {v.crateStage==="render" && (
+                              <div style={{marginTop:"6px"}}>
+                                <div style={{fontSize:"10px",color:"#7fd4ff",fontFamily:"'Courier New',monospace"}}>tokens: {v.foundryTokens.toLocaleString("en-US")} <span style={{fontSize:"7.5px",color:"#6a4a38"}}>(tokens are non-refundable)</span></div>
+                                {v.foundryFrameN>0 && v.foundryPending && (
+                                  <div key={v.foundryFrameN} style={{marginTop:"6px",width:"132px",animation:"tremble 0.3s ease-in-out 2"}}>
+                                    <DreamAsset dream={v.foundryPending} width={132} height={99} uid={"render"+v.foundryFrameN} />
+                                    <div style={{fontSize:"7.5px",color:"#7fd4ff",fontStyle:"italic"}}>{v.convergedCaption}</div>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <div style={{fontSize:"9.5px",color:"#8a6a52",marginTop:"6px"}}>DREAMCATCHER_DIFFUSION_v94_FINAL(2).wav — unskippable (the model is listening)</div>
+                            {v.crateSkipAvailable && !v.crateSkipUsed && (
+                              <div style={{marginTop:"8px"}}>
+                                <button onClick={v.skipCrate} style={{background:"#2a1040",border:"1px dashed #a24ae2",color:"#d8b7ff",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>{v.crateSkipLabel}</button>
+                                <div style={{fontSize:"6.5px",color:"#6a4a38",marginTop:"3px"}}>{v.crateSkipFinePrint}</div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
                           <>
                             <div style={{fontSize:"12px",color:"#ffb347",fontWeight:700,marginBottom:"4px"}}>{v.crateCaption}</div>
                             <div style={{background:"#0e0a06",borderRadius:"5px",height:"8px",overflow:"hidden"}}>
@@ -3006,8 +3344,26 @@ class App extends React.Component {
                               </div>
                             )}
                           </>
-                        )}
-                        {v.crateRevealPhase==="reel" && v.crateReel && (
+                        ))}
+                        {v.crateRevealPhase==="reel" && v.crateReel && (v.crateVariant==="foundry" ? (
+                          /* #45: the gallery reel (3.2s) decelerates over dreaming
+                              frames. The Undreamed™ holds the pre-landing slot and does
+                              NOT scoot — instead the reel re-renders identically
+                              ("converged early"): the slot didn't move, the movie did. */
+                          <div>
+                            <div style={{fontSize:"11px",color: v.crateReel.rerendered ? "#7fd4ff" : "#a9705a",fontWeight:700,marginBottom:"6px"}}>{v.crateReel.rerendered ? "RE-RENDERED (converged early — identical, provably)" : "…"}</div>
+                            <div style={{position:"relative",overflow:"hidden",border:"2px solid #4a2a6a",borderRadius:"8px",background:"#0a0612",height:"70px",display:"flex",alignItems:"center"}}>
+                              <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:"2px",background:"#e2c4ff",zIndex:5}}></div>
+                              <div style={{display:"flex",gap:"6px",transform:`translateX(calc(50% - ${v.crateReel.landingIndex*66+33}px))`,transition:"transform 2.6s cubic-bezier(0.1,0.7,0.2,1)"}}>
+                                {v.crateReel.strip.map((it,i)=>(
+                                  <div key={i} style={{minWidth:"60px",height:"60px",borderRadius:"5px",border:`2px solid ${it.reelOnly ? "#000000" : it.tierColor}`,background: it.reelOnly ? "#000000" : "linear-gradient(160deg,#1a0c28,#0c0616)",display:"flex",alignItems:"center",justifyContent:"center",padding:"2px"}}>
+                                    {it.reelOnly ? <UndreamedCard width={52} height={52}/> : <DreamAsset dream={it} width={52} height={39} animate={false} uid={"reel"+i}/>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
                           <div>
                             <div style={{fontSize:"11px",color: v.crateReel.recalibrated ? "#ff8a3d" : "#a9705a",fontWeight:700,marginBottom:"6px"}}>{v.crateReel.recalibrated ? "RECALIBRATING" : "…"}</div>
                             <div style={{position:"relative",overflow:"hidden",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",height:"70px",display:"flex",alignItems:"center"}}>
@@ -3019,20 +3375,45 @@ class App extends React.Component {
                               </div>
                             </div>
                           </div>
-                        )}
-                        {v.crateRevealPhase==="award" && v.crateAward && (
-                          <div>
-                            <div style={{fontSize:"10.5px",color:"#a9705a",fontStyle:"italic",marginBottom:"6px"}}>SO CLOSE! You were 1 slot from {v.fruitRollUp.name} (${v.fruitRollUp.value.toFixed(2)}). <span style={{fontSize:"7px"}}>(distance does not affect outcome; this reel is a movie; odds: yes)</span></div>
-                            <div key={v.crateAward.id} style={{border:`2px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"8px",padding:"12px",background:"linear-gradient(160deg,#241005,#160a04)",animation:"tierFlare 0.9s ease-out"}}>
-                              <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:RARITY_COLORS[v.crateAward.tier]||"#ff8a3d",letterSpacing:"1px"}}>{v.crateAward.tier.toUpperCase()}</div>
-                              <div style={{fontSize:"13px",fontWeight:800,color:"#ffe9d6",margin:"6px 0"}}>{v.crateAward.name}</div>
-                              <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ Downloads: 4,000,000</div>
-                            <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
-                            {v.crateRakebackLine && <div style={{fontSize:"8.5px",color:"#8a6a52",marginTop:"6px"}}>{v.crateRakebackLine}</div>}
-                          </div>
-                          <button onClick={v.toggleInspectCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Inspect JPEG</button>
-                          </div>
-                        )}
+                        ))}
+                        {v.crateRevealPhase==="award" && (v.crateVariant==="foundry" ? (
+                          /* #45: full rarity ceremony for dreamed awards — tier flare
+                              in tier color, the prompt receipt verbatim, the dreamed
+                              StatTrak™ gag, REMIX badge, $0.00 forever. */
+                          v.foundryAward && (
+                            <div>
+                              <div style={{fontSize:"10.5px",color:"#a9705a",fontStyle:"italic",marginBottom:"6px"}}>SO CLOSE! The Undreamed™ remains undreamed. <span style={{fontSize:"7px"}}>({v.theUndreamed.caption} · distance does not affect outcome; this reel is a movie; §4.2)</span></div>
+                              <div key={v.foundryAward.receipt+v.foundryAward.name} style={{border:`2px solid ${v.foundryAward.tierColor}`,borderRadius:"8px",padding:"12px",background:"linear-gradient(160deg,#1c0c2c,#0c0616)",animation:"tierFlare 0.9s ease-out"}}>
+                                <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:v.foundryAward.tierColor,letterSpacing:"1px"}}>{v.foundryAward.tier.toUpperCase()}</div>
+                                <div style={{display:"flex",justifyContent:"center",margin:"8px 0"}}><DreamAsset dream={v.foundryAward} width={150} height={112} uid="award"/></div>
+                                <div style={{fontSize:"13px",fontWeight:800,color:"#ffe9d6",margin:"6px 0"}}>{v.foundryAward.name}</div>
+                                <div style={{fontSize:"9px",color:"#7fd4ff",fontStyle:"italic",lineHeight:1.4}}>dreamed from: "{v.foundryAward.prompt}"</div>
+                                <div style={{fontSize:"8.5px",color:"#8a6a52",fontStyle:"italic",marginTop:"3px"}}>{v.provenanceLine}</div>
+                                {v.foundryAward.remix>0 && (
+                                  <div style={{fontSize:"10px",color:"#ff9ad5",fontWeight:800,marginTop:"4px"}}>REMIXED — still yours, technically new (novelty: est.)</div>
+                                )}
+                                <div style={{fontSize:"9.5px",color:"#e8a52a",marginTop:"4px"}}>StatTrak™ {v.foundryAward.statMetric}</div>
+                                <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.foundryAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
+                                {v.crateRakebackLine && <div style={{fontSize:"8.5px",color:"#8a6a52",marginTop:"6px"}}>{v.crateRakebackLine}</div>}
+                              </div>
+                              <button onClick={v.toggleInspectCrate} style={{marginTop:"8px",background:"#2a1040",border:"1px dashed #a24ae2",color:"#d8b7ff",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Inspect Dream</button>
+                            </div>
+                          )
+                        ) : (
+                          v.crateAward && (
+                            <div>
+                              <div style={{fontSize:"10.5px",color:"#a9705a",fontStyle:"italic",marginBottom:"6px"}}>SO CLOSE! You were 1 slot from {v.fruitRollUp.name} (${v.fruitRollUp.value.toFixed(2)}). <span style={{fontSize:"7px"}}>(distance does not affect outcome; this reel is a movie; odds: yes)</span></div>
+                              <div key={v.crateAward.id} style={{border:`2px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"8px",padding:"12px",background:"linear-gradient(160deg,#241005,#160a04)",animation:"tierFlare 0.9s ease-out"}}>
+                                <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:RARITY_COLORS[v.crateAward.tier]||"#ff8a3d",letterSpacing:"1px"}}>{v.crateAward.tier.toUpperCase()}</div>
+                                <div style={{fontSize:"13px",fontWeight:800,color:"#ffe9d6",margin:"6px 0"}}>{v.crateAward.name}</div>
+                                <div style={{fontSize:"9.5px",color:"#e8a52a"}}>StatTrak™ Downloads: 4,000,000</div>
+                              <div style={{fontSize:"11px",color:"#8fd97a",fontWeight:800,marginTop:"6px"}}>Estimated Value: ${v.crateAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
+                              {v.crateRakebackLine && <div style={{fontSize:"8.5px",color:"#8a6a52",marginTop:"6px"}}>{v.crateRakebackLine}</div>}
+                            </div>
+                            <button onClick={v.toggleInspectCrate} style={{marginTop:"8px",background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:800,fontSize:"11px",padding:"6px 12px",borderRadius:"6px",cursor:"pointer"}}>Inspect JPEG</button>
+                            </div>
+                          )
+                        ))}
                         {v.crateResult && v.crateRevealPhase!=="reel" && (
                           <div style={{marginTop:"12px",background:"#5a1a0a",border:"1px solid #ff5a14",borderRadius:"6px",padding:"10px 14px",color:"#ffcf9a",fontWeight:700,fontSize:"13px"}}>{v.crateResult}</div>
                         )}
@@ -3172,7 +3553,7 @@ class App extends React.Component {
           </div>
         )}
 
-        {v.crateInspectOpen && v.crateAward && (
+        {v.crateInspectOpen && v.crateAward && v.crateVariant!=="foundry" && (
           <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.86)",zIndex:150,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={v.toggleInspectCrate}>
             <div onClick={(e)=>e.stopPropagation()} style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:`3px solid ${RARITY_COLORS[v.crateAward.tier]||"#ff8a3d"}`,borderRadius:"10px",maxWidth:"420px",width:"100%",padding:"26px",textAlign:"center",boxShadow:"0 0 60px rgba(255,80,20,0.4)"}}>
               <div style={{fontFamily:"'Bangers',cursive",fontSize:"22px",color:"#ffb347",letterSpacing:"1px",marginBottom:"10px"}}>INSPECT JPEG</div>
@@ -3185,6 +3566,32 @@ class App extends React.Component {
               </div>
               <div style={{fontSize:"10px",color:"#a9705a",fontStyle:"italic",margin:"12px 0"}}>It's the same image, larger. The watermark is intact (it was never removable, §1.3).</div>
               <button onClick={v.toggleInspectCrate} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"8px",cursor:"pointer"}}>Stop Inspecting</button>
+            </div>
+          </div>
+        )}
+
+        {/* #45: INSPECT DREAM — the receipt is the dream: prompt, provenance,
+            seed receipt (FNV-1a family, integration-2026 §10.10), conceptual
+            wear. Same seed → same dream, forever, and this is the same dream,
+            larger. It was never smaller. */}
+        {v.crateInspectOpen && v.foundryAward && v.crateVariant==="foundry" && (
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.86)",zIndex:150,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={v.toggleInspectCrate}>
+            <div onClick={(e)=>e.stopPropagation()} style={{background:"linear-gradient(160deg,#1c0c2c,#2a0e2a)",border:`3px solid ${v.foundryAward.tierColor}`,borderRadius:"10px",maxWidth:"440px",width:"100%",padding:"26px",textAlign:"center",boxShadow:"0 0 60px rgba(162,74,226,0.45)"}}>
+              <div style={{fontFamily:"'Bangers',cursive",fontSize:"22px",color:"#c9a5ff",letterSpacing:"1px",marginBottom:"10px"}}>INSPECT DREAM</div>
+              <div style={{border:`2px solid ${v.foundryAward.tierColor}`,borderRadius:"8px",padding:"16px",background:"#0a0612"}}>
+                <DreamAsset dream={v.foundryAward} width={260} height={195} uid="inspect"/>
+                <div style={{fontFamily:"'Bangers',cursive",fontSize:"17px",color:v.foundryAward.tierColor,letterSpacing:"1px",marginTop:"10px"}}>{v.foundryAward.tier.toUpperCase()}</div>
+                <div style={{fontSize:"16px",fontWeight:800,color:"#ffe9d6",margin:"10px 0"}}>{v.foundryAward.name}</div>
+                <div style={{fontSize:"10px",color:"#7fd4ff",fontStyle:"italic",lineHeight:1.5,margin:"8px 0"}}>dreamed from: "{v.foundryAward.prompt}"</div>
+                <div style={{fontSize:"9.5px",color:"#8a6a52",fontStyle:"italic"}}>{v.provenanceLine}</div>
+                <div style={{fontSize:"9.5px",color:"#a9705a",fontFamily:"'Courier New',monospace",marginTop:"6px"}}>receipt: {v.foundryAward.receipt} (provably dreamed)</div>
+                <div style={{fontSize:"9.5px",color:"#e8c9ac",marginTop:"6px"}}>Wear: {v.dreamWearStamp}</div>
+                <div style={{fontSize:"9.5px",color:"#e8a52a",marginTop:"4px"}}>StatTrak™ {v.foundryAward.statMetric}</div>
+                <div style={{fontSize:"13px",color:"#8fd97a",fontWeight:800,marginTop:"8px"}}>Estimated Value: ${v.foundryAward.value.toFixed(2)} · Cash Value (est.): $0.00</div>
+                {v.foundryAward.remix>0 && <div style={{fontSize:"10px",color:"#ff9ad5",fontWeight:800,marginTop:"4px"}}>Remix #{v.foundryAward.remix} — the palette changed; nothing else did</div>}
+              </div>
+              <div style={{fontSize:"10px",color:"#a9705a",fontStyle:"italic",margin:"12px 0"}}>It's the same dream, larger. It was never smaller. The seed is the signature (the signature is the seed).</div>
+              <button onClick={v.toggleInspectCrate} style={{background:"linear-gradient(180deg,#a24ae2,#6a1fa2)",border:"2px solid #e2c4ff",color:"#16051f",fontWeight:900,fontSize:"12px",padding:"9px 16px",borderRadius:"8px",cursor:"pointer"}}>Stop Inspecting</button>
             </div>
           </div>
         )}
@@ -3337,7 +3744,7 @@ class App extends React.Component {
                 {v.contractPhase==="reel" ? (
                   (()=>{
                     const p = Market.contractPreview(v.contractSel);
-                    const label = p ? (p.photo ? "A PHOTOGRAPH" : p.nextTier) : "…";
+                    const label = p ? (p.photo ? "A PHOTOGRAPH" : p.dreamed ? p.nextTier + " (DREAMED)" : p.nextTier) : "…";
                     return (
                       <div style={{position:"relative",overflow:"hidden",height:"52px",border:"2px solid #7a3a1a",borderRadius:"8px",background:"#0e0a06",marginBottom:"8px"}}>
                         <div style={{position:"absolute",left:"50%",top:0,bottom:0,width:"2px",background:"#ffe9d6",zIndex:5}}></div>
@@ -3362,10 +3769,12 @@ class App extends React.Component {
                     </button>
                     {v.contractResult && v.contractResult.ok && (
                       <div style={{marginTop:"10px",background:"#3a2a05",border:"2px solid #ffd54a",borderRadius:"8px",padding:"10px",animation:"tierFlare 0.9s ease-out"}}>
-                        <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:"#ffd54a"}}>{v.contractResult.kind==="photograph" ? "COMPLEMENTARY PHOTOGRAPH" : "CONTRACT FULFILLED"}</div>
+                        <div style={{fontFamily:"'Bangers',cursive",fontSize:"13px",color:"#ffd54a"}}>{v.contractResult.kind==="photograph" ? "COMPLEMENTARY PHOTOGRAPH" : v.contractResult.kind==="dream" ? "CONTRACT FULFILLED (DREAMED)" : "CONTRACT FULFILLED"}</div>
                         <div style={{fontSize:"11px",color:"#ffe9d6",fontWeight:700,margin:"4px 0"}}>{v.contractResult.name}</div>
                         <div style={{fontSize:"9.5px",color:"#a9705a"}}>
-                          {v.contractResult.kind==="photograph" ? v.contractResult.note : "Float Value (verified by nobody): "+v.contractResult.float.toFixed(10)+" · "+v.contractResult.statTrakNote}
+                          {v.contractResult.kind==="photograph" ? v.contractResult.note
+                            : v.contractResult.kind==="dream" ? v.contractResult.tier + " · " + v.contractResult.note + " · Cash Value (est.): $0.00"
+                            : "Float Value (verified by nobody): "+v.contractResult.float.toFixed(10)+" · "+v.contractResult.statTrakNote}
                         </div>
                       </div>
                     )}
@@ -3379,10 +3788,18 @@ class App extends React.Component {
               ) : (
                 <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(165px,1fr))",gap:"10px",marginBottom:"18px"}}>
                   {v.invDigital.map(e=>(
-                    <div key={e.id} onClick={()=>v.openInvDetail(e.id)} style={{border:"2px solid #4aa8c9",borderRadius:"8px",background:"linear-gradient(160deg,#0a1418,#060c10)",padding:"10px",cursor:"pointer"}}>
-                      <div style={{fontSize:"24px",textAlign:"center",marginBottom:"4px"}}>🖼️</div>
+                    /* #45: dreamed assets render their own composition in place of
+                        the JPEG emoji — the provenance line replaces the filename. */
+                    <div key={e.id} onClick={()=>v.openInvDetail(e.id)} style={{border:`2px solid ${e.dreamed ? (RARITY_COLORS[e.dreamBaseTier]||"#a24ae2") : "#4aa8c9"}`,borderRadius:"8px",background:e.dreamed?"linear-gradient(160deg,#140a20,#0a0612)":"linear-gradient(160deg,#0a1418,#060c10)",padding:"10px",cursor:"pointer"}}>
+                      {e.dreamed ? (
+                        <div style={{display:"flex",justifyContent:"center",marginBottom:"6px"}}>
+                          <DreamAsset dream={{art:{...e.dreamArt}, name:e.name, remix:e.remixN||0, receipt:e.dreamReceipt||"x"}} width={118} height={88} uid={e.id}/>
+                        </div>
+                      ) : (
+                        <div style={{fontSize:"24px",textAlign:"center",marginBottom:"4px"}}>🖼️</div>
+                      )}
                       <div style={{fontSize:"10px",fontWeight:800,color:"#ffe9d6",lineHeight:1.3}}>{e.name}</div>
-                      <div style={{fontSize:"9.5px",color:"#4aa8c9",fontStyle:"italic",marginTop:"3px"}}>{DIGITAL_ASSET_VALUE}</div>
+                      <div style={{fontSize:"9.5px",color:e.dreamed?"#a24ae2":"#4aa8c9",fontStyle:"italic",marginTop:"3px"}}>{e.dreamed ? (e.remixN ? "REMIX #"+e.remixN+" · Cash Value (est.): $0.00" : "Digital Asset (Dreamed) · Cash Value (est.): $0.00") : DIGITAL_ASSET_VALUE}</div>
                     </div>
                   ))}
                 </div>
@@ -3407,7 +3824,7 @@ class App extends React.Component {
         {v.invOpen && v.invDetail && (()=>{
           const e = v.invDetail;
           const cat = e.catalogId ? catalogById(e.catalogId) : null;
-          const color = cat ? (RARITY_COLORS[cat.rarity]||"#ff8a3d") : (e.itemClass==="receipt" ? "#e0a800" : "#4aa8c9");
+          const color = e.dreamed ? (RARITY_COLORS[e.dreamBaseTier]||"#a24ae2") : (cat ? (RARITY_COLORS[cat.rarity]||"#ff8a3d") : (e.itemClass==="receipt" ? "#e0a800" : "#4aa8c9"));
           const sellable = e.itemClass==="receipt" || v.mkSellable(e);
           const offer = v.mkOfferFor(e);
           const contractOk = Market.contractEligible(e);
@@ -3416,6 +3833,13 @@ class App extends React.Component {
             <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.9)",zIndex:175,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}} onClick={v.closeInvDetail}>
               <div onClick={ev=>ev.stopPropagation()} style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:`3px solid ${color}`,borderRadius:"10px",maxWidth:"480px",width:"100%",padding:"24px",maxHeight:"88vh",overflowY:"auto",boxShadow:"0 0 60px rgba(0,0,0,0.7)"}}>
                 <div style={{fontFamily:"'Bangers',cursive",fontSize:"18px",color:"#ffb347",lineHeight:1.2,marginBottom:"6px"}}>{e.name}</div>
+                {e.dreamed && (
+                  /* #45: the dreamed composition, live — the seed is the signature */
+                  <div style={{margin:"10px 0",textAlign:"center"}}>
+                    <DreamAsset dream={{art:e.dreamArt, name:e.name, remix:e.remixN||0, receipt:e.dreamReceipt||"x"}} width={230} height={172} uid={e.id}/>
+                    <div style={{fontFamily:"'Bangers',cursive",fontSize:"12px",color:color,letterSpacing:"1px",marginTop:"6px"}}>{(e.dreamTier||"").toUpperCase()}</div>
+                  </div>
+                )}
                 {cat && (
                   <div style={{position:"relative",margin:"10px 0",textAlign:"center",perspective:"600px"}}>
                     <div style={{display:"inline-block",animation:"skinWobble 7s ease-in-out infinite"}}>
@@ -3442,9 +3866,21 @@ class App extends React.Component {
                     <div style={{marginTop:"4px"}}><SkinChainLink onOpen={()=>v.openSkinchainTx(e.id, "Market Event Receipt: "+(e.receiptFor||e.name), 0)} /></div>
                   </div>
                 )}
-                {e.itemClass==="digital-asset" && (
+                {e.itemClass==="digital-asset" && (e.dreamed ? (
+                  /* #45: dreamed walls (foundry §6) — politely rejected at every
+                      exit except the one that pretends. The prompt receipt is
+                      verbatim on the card; wear is conceptual. */
+                  <div style={{fontSize:"10.5px",color:"#a9705a",lineHeight:1.7,marginBottom:"10px"}}>
+                    <div style={{color:"#7fd4ff",fontStyle:"italic"}}>dreamed from: "{e.prompt}"</div>
+                    <div style={{fontStyle:"italic"}}>{v.provenanceLine}</div>
+                    <div>Wear: <b style={{color:"#e8c9ac"}}>{e.wear||v.dreamWearStamp}</b></div>
+                    <div style={{color:"#8fd97a",fontWeight:800}}>Estimated Value: ${(typeof e.dreamValue==="number"?e.dreamValue:0).toFixed(2)} · Cash Value (est.): $0.00</div>
+                    <div style={{color:"#e24a4a",fontSize:"9.5px"}}>Instant Sell™: {v.dreamInstantSellWall}</div>
+                    <div style={{color:"#e24a4a",fontSize:"9.5px"}}>Listing: {v.dreamListWall}</div>
+                  </div>
+                ) : (
                   <div style={{fontSize:"10.5px",color:"#4aa8c9",fontStyle:"italic",marginBottom:"10px"}}>Estimated value: {DIGITAL_ASSET_VALUE}. Non-sellable, non-listable, non-contractible.</div>
-                )}
+                ))}
                 <div style={{background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"6px",padding:"8px 12px",marginBottom:"12px"}}>
                   <div style={{fontSize:"9.5px",color:"#cf6a32",fontWeight:700,letterSpacing:"1px",marginBottom:"4px"}}>PROVENANCE</div>
                   {(e.provenance||[]).length===0
@@ -3452,7 +3888,11 @@ class App extends React.Component {
                     : (e.provenance||[]).map((p,i)=>(<div key={i} style={{fontSize:"9.5px",color:"#a9705a",lineHeight:1.5}}>— {p}</div>))}
                 </div>
                 <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
-                  {e.itemClass==="digital-asset" ? (
+                  {e.dreamed ? (
+                    /* #45: the walls, rendered — Instant Sell™ and listing reject
+                        dreamed assets politely; the buttons stay, dead, titled. */
+                    <button disabled title={v.dreamInstantSellWall} style={{background:"#2a1040",border:"2px solid #5a3a6a",color:"#8a6a8a",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>Instant Sell™ — unavailable</button>
+                  ) : e.itemClass==="digital-asset" ? (
                     <button disabled title={DIGITAL_ASSET_SELL_TOOLTIP} style={{background:"#3a2010",border:"2px solid #5a4232",color:"#8a6a52",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>Sell</button>
                   ) : (
                     <button
@@ -3464,15 +3904,18 @@ class App extends React.Component {
                         : {background:"#3a2010",border:"2px solid #5a4232",color:"#8a6a52",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}
                     >Instant Sell™ — {offer} BB</button>
                   )}
+                  {e.dreamed && (
+                    <button disabled title={v.dreamListWall} style={{background:"#2a1040",border:"1px dashed #5a3a6a",color:"#8a6a8a",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>List on Market</button>
+                  )}
                   {e.itemClass==="market-grade" && (
                     <button onClick={()=>v.marketStartAsk(e.id)} disabled={!v.mkSellable(e)} style={v.mkSellable(e)
                       ? {background:"#3a2010",border:"1px dashed #ff8a3d",color:"#ffcf9a",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}
                       : {background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>List on Market</button>
                   )}
-                  {e.itemClass==="market-grade" && (
+                  {(e.itemClass==="market-grade" || e.dreamed) && (
                     <button onClick={()=>v.contractToggle(e.id)} disabled={!contractOk} style={contractOk
                       ? {background:"#3a2010",border:"1px dashed #a24ae2",color:"#d8b79b",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}
-                      : {background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>{inContract ? "✓ In contract selection" : "Add to Contract"}</button>
+                      : {background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"not-allowed"}}>{inContract ? "✓ In contract selection" : (e.dreamed ? "Add Dream to Contract" : "Add to Contract")}</button>
                   )}
                   <button onClick={v.closeInvDetail} style={{background:"none",border:"none",color:"#a9705a",fontSize:"10.5px",cursor:"pointer",textDecoration:"underline",padding:0,marginLeft:"auto"}}>close</button>
                 </div>

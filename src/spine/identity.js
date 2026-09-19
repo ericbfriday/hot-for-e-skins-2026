@@ -340,7 +340,10 @@ Bus.on(EVENTS.ROUND_SETTLED, (p) => {
   } else if (WIN_KINDS.has(p.kind)) {
     stats.lossStreak = 0;
   }
-  if (p.surface === "crates") stats.cratesOpened += 1;
+  // #45: dreams are dreams, not crates — the dreamed settle carries the
+  // dreamed flag and the Foundry keeps its own ledger (hfes_foundry_dreams),
+  // so "Crates Opened" stays a Defuser number.
+  if (p.surface === "crates" && p.dreamed !== true) stats.cratesOpened += 1;
   commitStats(before);
 });
 Bus.on(EVENTS.ROUND_FORFEIT, () => {

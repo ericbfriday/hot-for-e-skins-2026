@@ -148,6 +148,16 @@ export const SKINCHAIN_CHAT_LINES = [
   { cast: "MOD_Chad_Official", msg: "the chain is SO close to block 1 guys!! (day 847)" },
 ];
 
+// #45 AI Skin Foundry (spec §7 — the Foundry's chat lines, verbatim): drawn
+// from the ambient cadence at a low rate. DEPOSITOR.ai renders via the
+// reserved cast (the [AI] badge, #43's plumbing); promptwizard_9k is a
+// surface-owned named persona (prompted forever).
+export const FOUNDRY_CHAT_LINES = [
+  { user: "promptwizard_9k", color: "#ffd54a", msg: "i asked for the karambit and it dreamed me a spork FEELING something" },
+  { cast: "DEPOSITOR.ai", msg: "Analysis: the dreams are original (est.). Collecting originals correlates with depositing (see everything)." },
+  { cast: "MOD_Chad_Official", msg: "AI skins are the future!! the future is pending!!" },
+];
+
 export const DEFAULT_NONRESPONSE = {
   who_asked: "who asked",
   win_misread: "W",
