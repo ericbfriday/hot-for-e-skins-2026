@@ -36,9 +36,14 @@ export default class TickerPanel extends React.Component {
 
     return (
       <div style={{ borderRight: "2px solid #3a1206", padding: "14px", minHeight: "520px", background: "#170a05" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "10px", flexWrap: "wrap" }}>
           <div style={{ width: "8px", height: "8px", borderRadius: "50%", background: "#ff3030", animation: "blink 1s infinite" }}></div>
           <div style={{ fontFamily: "'Bangers',cursive", color: "#ff8a3d", fontSize: "14px", letterSpacing: "1px" }}>LIVE WINS</div>
+          {/* #43 (ai-layer §7; integration-2026 §10.4): GPT-wash badge two of
+              exactly three, site-wide. The fine print confesses at 4pt. */}
+          <span style={{ fontSize: "9px", color: "#8fd97a", fontWeight: 800, letterSpacing: "0.5px", whiteSpace: "nowrap" }}>
+            AI-VERIFIED WINS™ <span style={{ fontSize: "4px", color: "#5a4232", fontWeight: 400 }}>(verification pending)</span>
+          </span>
         </div>
 
         {showSubtitle && (

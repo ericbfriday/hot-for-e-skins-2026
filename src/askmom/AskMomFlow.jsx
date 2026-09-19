@@ -291,6 +291,10 @@ export default function AskMomFlow({ source = "header", enterStage = null, panic
     Bus.emit(EVENTS.DEPOSIT_COMPLETED, {
       packageId: pkg.id, oc: pkg.oc, bonusOc: pkg.bonusOc, usdFace: usd,
       source, firstEver: stats.firstEver, whileExcluded: excludedNow,
+      // #43 (ai-layer §5): additive — the deposit's lifetime number, so the
+      // post-deposit Memo can cite "deposit #{n}" without reading another
+      // surface's storage. Existing consumers ignore it.
+      count: stats.count,
     });
     setReceiptCtx({
       pkg, usd, tickCents, addons,

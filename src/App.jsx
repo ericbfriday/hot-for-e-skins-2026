@@ -57,6 +57,11 @@ import {
   gradeLabel, teacherDisplay,
 } from "./panic/homework.js";
 import { Retention, COPY as RETENTION_COPY } from "./retention/state.js";
+// #43 AI layer (ai-layer §4/§6): AI Advice™ chips on the five game surfaces +
+// the APPEAL toast venue. Advice is free — it counts `aiAnalyses` in StatTrak,
+// moves no BB, and emits nothing on the bus (integration-2026 §2).
+import AdviceChip from "./ai/AdviceChip.jsx";
+import { APPEAL_TOAST } from "./ai/decks.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -791,7 +796,10 @@ class App extends React.Component {
       hushLine = HUSH_LINE;
     }
     const missed = Ticker.snapshot().hiddenCount;
-    Bus.emit(EVENTS.PANIC_REVEALED, {hiddenMs, missed}); // Band auto-restores; ticker flushes the backlog
+    // #43 (integration-2026 §2): panic.revealed gains `rung` (0–3, the
+    // suspicion ladder at reveal) — additive payload extension; the pass (#46)
+    // consumes it for the suspicion quest. Existing consumers unchanged.
+    Bus.emit(EVENTS.PANIC_REVEALED, {hiddenMs, missed, rung: this._panicRung || 0}); // Band auto-restores; ticker flushes the backlog
     const missedLine = Ticker.missedSummary(hiddenMs);
     this._panicSwapDocMeta(null, 0);
     clearInterval(this._panicWordInt);
@@ -1701,6 +1709,10 @@ class App extends React.Component {
   pushTicker(line){
     Ticker.emitTicker({ text: line, isYou: true });
   }
+  // #43 (ai-layer §9): every AI Advice™ press renders an analysis (card or
+  // one-liner) — each counts toward StatTrak™ "AI analyses received" and the
+  // milestone leak at 25 (chat's once-per-identity trigger list).
+  noteAiAnalysis(){ Identity.addStat("aiAnalyses", 1); }
   pushChat(entry){
     // #32: game-side chat lines (crash stick chatter, bot taunts, crate
     // reactions, MOD/gag beats) — stamped with an id and drained into the
@@ -2088,7 +2100,12 @@ class App extends React.Component {
       replayCrates: !s.crateOpening && !s.crateKeyBought && s.crateFreeKeyCount<=0 && bb < GAME_PRICES_BB.crates, topUpAndPlayCrates:()=>this.topUpAndPlay("crates"),
       showTicker: this.props.showTicker ?? true,
       showChat: this.props.showChat ?? true,
-      chatHooks: { gratuity:(n)=>this.chatGratuity(n) },
+      chatHooks: {
+        gratuity:(n)=>this.chatGratuity(n),
+        // #43 (ai-layer §6): the timeout box's APPEAL toast venue — the appeal
+        // is analyzed on receipt (§4.1). Thank you for participating.
+        appeal:()=>this.toast(APPEAL_TOAST),
+      },
       gameFeed: s.chat, // #32: game-side lines drained into the ChatPanel
       activeTab:s.activeTab, tabBg, tabColor,
       isRoulette: s.activeTab==="roulette", isCoinflip: s.activeTab==="coinflip", isCrash: s.activeTab==="crash", isCrates: s.activeTab==="crates",
@@ -2098,6 +2115,11 @@ class App extends React.Component {
       setTab_trolley:()=>this.setTab("trolley"),
       rouletteStrip:ROULETTE_STRIP, rouletteOffset:s.rouletteOffset, rouletteTransition:s.rouletteTransition,
       rouletteSpinning:s.rouletteSpinning, rouletteResult:s.rouletteResult, playRoulette:()=>this.playRoulette(),
+      // #43 AI Advice™ (ai-layer §4): every press renders an analysis (card or
+      // one-liner) and counts `aiAnalyses`; the glowing recommendation follows
+      // the advice (the worse choice — the surface's own action).
+      aiAnalysisNote:()=>this.noteAiAnalysis(),
+      playCoinflipAgain:()=>this.playCoinflip(),
       rouletteSpinPrice: Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0),
       rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : ("SPIN AGAIN — "+(Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0))+" BB"),
       rouletteSpinsLeft: Math.floor(bb / Roulette.SPIN_PRICE_BB),
@@ -2497,7 +2519,10 @@ class App extends React.Component {
               <div style={{fontFamily:"'Bangers',cursive",fontSize:"30px",whiteSpace:"nowrap",color:"#ffb347",textShadow:"2px 2px 0 #7a1c00,0 0 18px rgba(255,90,20,0.6)"}}>HOT FOR E-SKINS</div>
               <div style={{display:"flex",alignItems:"center",gap:"5px",background:"#0e0a06",border:"1px solid #3a2a1a",borderRadius:"5px",padding:"4px 9px"}}>
                 <div className="fair-badge"></div>
-                <span style={{fontSize:"10px",color:"#8fd97a",fontWeight:700,letterSpacing:"0.5px"}}>PROVABLY FAIR</span>
+                <span style={{fontSize:"10px",color:"#8fd97a",fontWeight:700,letterSpacing:"0.5px"}}>PROVABLY FAIR™ — NOW AI-REVIEWED</span>
+                {/* #43 (ai-layer §7; integration-2026 §10.4): GPT-wash badge
+                    three of exactly three, site-wide. 4pt confession. */}
+                <span style={{fontSize:"4px",color:"#5a4232"}}>(review: self; result: passed)</span>
               </div>
             </div>
             <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:"6px"}}>
@@ -2569,7 +2594,14 @@ class App extends React.Component {
                   </div>
                 )}
               </div>
-              {v.moodLine && <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic",whiteSpace:"nowrap"}}>{v.moodLine}</div>}
+              {v.moodLine && (
+                <div style={{fontSize:"11px",color:"#e8a52a",fontStyle:"italic",whiteSpace:"nowrap"}}>
+                  {/* #43 (ai-layer §7; integration-2026 §10.4): GPT-wash badge
+                      one of exactly three, site-wide. 4pt confession. */}
+                  <span style={{color:"#8fd97a",fontWeight:800,fontStyle:"normal",letterSpacing:"0.5px",fontSize:"10px"}}>AI-OPTIMIZED MOOD™ </span>
+                  {v.moodLine} <span style={{fontSize:"4px",color:"#5a4232"}}>(optimization decorative)</span>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2709,6 +2741,8 @@ class App extends React.Component {
                     </div>
                     <button onClick={v.playRoulette} disabled={v.rouletteSpinning} style={{marginTop:"16px",background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.rouletteSpinning ? "Spinning..." : ("SPIN — "+v.rouletteSpinPrice+" BB")}</button>
                     <div style={{fontSize:"9px",color:"#7a5a4a",marginTop:"4px"}}>(that's ${(v.rouletteSpinPrice*0.3125).toFixed(2)} in old money)</div>
+                    {/* #43 AI Advice™ — roulette pre-spin (spec §4's verbatim card) */}
+                    <div style={{marginTop:"8px"}}><AdviceChip surface="roulette" onAnalysis={v.aiAnalysisNote} onRecommend={v.playRoulette} /></div>
 
                     {v.rouletteReceipt && (
                       <div style={{marginTop:"14px"}}>
@@ -2783,6 +2817,8 @@ class App extends React.Component {
                       <button onClick={v.playCoinflipMom} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer"}}>{v.coinFlipping ? "Flipping..." : "CALL: MOM"}</button>
                       <button onClick={v.playCoinflipS89} disabled={v.coinFlipping} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 18px",borderRadius:"8px",cursor:"pointer"}}>{v.coinFlipping ? "Flipping..." : "CALL: §8.9"}</button>
                     </div>
+                    {/* #43 AI Advice™ — coinflip pre-flip */}
+                    <div style={{textAlign:"center",marginTop:"8px"}}><AdviceChip surface="coinflip" onAnalysis={v.aiAnalysisNote} onRecommend={v.playCoinflipAgain} /></div>
                     <div style={{fontSize:"9px",color:"#7a5a4a",textAlign:"center",marginTop:"4px"}}>FLIP — {Coinflip.FLIP_PRICE_BB} BB (that's $1.00 in old money)</div>
 
                     {v.coinReceipt && (
@@ -2863,6 +2899,8 @@ class App extends React.Component {
                         }}
                       >{v.crashButtonLabel}</button>
                       <button onClick={v.expressCashoutClick} disabled style={{background:"#2a1408",border:"1px dashed #5a4232",color:"#8a6a52",fontWeight:700,fontSize:"11px",padding:"12px 14px",borderRadius:"8px",cursor:"pointer"}}>{v.expressCashoutLabel}</button>
+                      {/* #43 AI Advice™ — crash pre-run */}
+                      <AdviceChip surface="crash" onAnalysis={v.aiAnalysisNote} onRecommend={v.startCrash} />
                     </div>
                   </div>
                 )}
@@ -2901,11 +2939,13 @@ class App extends React.Component {
                       </div>
                       <div style={{flex:1,minWidth:"220px"}}>
                         {!v.crateKeyBought && !v.crateOpening && (
-                          <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+                          <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
                             {v.crateFreeKeyCount>0 && (
                               <button onClick={v.useFreeKey} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"12px 18px",borderRadius:"8px",cursor:"pointer"}}>Use Free Key ({v.crateFreeKeyCount})</button>
                             )}
                             <button onClick={v.crateBtnAction} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.crateBtnLabel}</button>
+                            {/* #43 AI Advice™ — crate pre-defuse */}
+                            <AdviceChip surface="crates" onAnalysis={v.aiAnalysisNote} onRecommend={v.buyKey} />
                           </div>
                         )}
                         {v.crateKeyBought && !v.crateOpening && (
@@ -3421,9 +3461,11 @@ class App extends React.Component {
                 </div>
                 <div style={{fontSize:"9px",color:"#8a6a52",fontStyle:"italic",margin:"10px 0",lineHeight:1.5}}>{MARKET_OC_NOTICE} Item arrives immediately, stamped: {TRADE_HOLD_LABEL}. Purchases are decorative (§1) — only fake-won items can ever be sold or contracted.</div>
                 <div style={{fontSize:"9px",color:"#8a6a52",fontStyle:"italic",margin:"0 0 10px",lineHeight:1.5,textAlign:"center"}}>{REALITY_STRAP}</div>
-                <div style={{display:"flex",gap:"10px",flexWrap:"wrap"}}>
+                <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>
                   <button onClick={()=>v.marketConfirmPurchase(it.id)} style={{background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"13px",padding:"11px 16px",borderRadius:"8px",cursor:"pointer"}}>Complete Purchase — {q.total} BB</button>
                   <button onClick={v.marketCloseCheckout} style={{background:"#3a2010",border:"1px dashed #7a5a2a",color:"#a9705a",fontWeight:700,fontSize:"12px",padding:"11px 14px",borderRadius:"8px",cursor:"pointer"}}>Keep browsing</button>
+                  {/* #43 AI Advice™ — marketplace checkout */}
+                  <AdviceChip surface="market" onAnalysis={v.aiAnalysisNote} onRecommend={()=>v.marketConfirmPurchase(it.id)} />
                 </div>
               </div>
             </div>

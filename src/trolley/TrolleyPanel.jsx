@@ -1,17 +1,25 @@
 import React from "react";
 import { TrolleyCtl } from "./controller.js";
 import * as E from "./engine.js";
+// #43 AI layer (ai-layer §2): the model card — reachable from the MORAL EXPRESS
+// tab ("ABOUT THE CONDUCTOR") and linked from her first deliberation of a
+// session (the request resolves here). The card lives with the AI furniture in
+// src/ai/ (integration-2026 §1); her deliberation copy stays in this venue.
+import ModelCardModal from "../ai/ModelCardModal.jsx";
+import { MODEL_CARD_BUTTON, MODEL_CARD_TRACE_LINK } from "../ai/ModelCard.js";
 
 const PHASE_LABELS = { title: "TITLE CARD", stakes: "STAKES REVEAL", betting: "BETTING WINDOW", deliberation: "DELIBERATION", verdict: "VERDICT" };
 
 function secs(ms) { return Math.max(0, Math.ceil(ms / 1000)); }
 
-function Header() {
+function Header({ onAboutConductor }) {
   return (
     <div style={{ marginBottom: "12px" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: "10px", flexWrap: "wrap" }}>
         <div style={{ fontFamily: "'Bangers',cursive", fontSize: "20px", color: "#ffb347" }}>MORAL EXPRESS 🚋</div>
         <div style={{ fontSize: "10.5px", color: "#ff6a6a", fontWeight: 800, whiteSpace: "nowrap" }}>LIVE — {E.COPY.liveBadge}</div>
+        {/* #43: the model card affordance — the card is the disclosure. */}
+        <button onClick={onAboutConductor} style={{ background: "#0a1420", border: "1px solid #7fd4ff", color: "#7fd4ff", fontWeight: 800, fontSize: "9.5px", padding: "4px 10px", borderRadius: "6px", cursor: "pointer", letterSpacing: "0.5px" }}>{MODEL_CARD_BUTTON}</button>
       </div>
       {/* The red dot never blinks off (§1). The fine print is 4pt and always present. */}
       <div style={{ fontSize: "5px", color: "rgba(232,201,172,0.28)", marginTop: "3px", lineHeight: 1.5 }}>{E.COPY.finePrint}</div>
@@ -124,7 +132,7 @@ function ConvictionBox({ snap }) {
 }
 
 class TrolleyPanelBase extends React.Component {
-  state = { snap: null, analysisOpen: false };
+  state = { snap: null, analysisOpen: false, cardOpen: false };
 
   componentDidMount() {
     this.setState({ snap: TrolleyCtl.snapshot() });
@@ -134,20 +142,35 @@ class TrolleyPanelBase extends React.Component {
     if (this._off) this._off();
   }
 
+  openCard = () => this.setState({ cardOpen: true });
+  closeCard = () => this.setState({ cardOpen: false });
+
+  // #43 (ai-layer §2): the trace link renders during her FIRST deliberation of
+  // the session (whichever dilemma first reaches the deliberation phase owns
+  // the link; later deliberations don't repeat it — the request was already
+  // resolved, presumably).
+  firstDelibLink(snap) {
+    if (this._cardLinkedDilemma == null) this._cardLinkedDilemma = snap.dilemmaNumber;
+    return snap.dilemmaNumber === this._cardLinkedDilemma;
+  }
+
   render() {
     const snap = this.state.snap;
+    const card = this.state.cardOpen ? <ModelCardModal onClose={this.closeCard} /> : null;
     if (!snap || !snap.started) {
       return (
         <div>
-          <Header />
+          <Header onAboutConductor={this.openCard} />
           <div style={{ fontSize: "11px", color: "#a9705a", fontStyle: "italic" }}>the broadcast resumes shortly (it never stopped)</div>
+          {card}
         </div>
       );
     }
     return (
       <div>
-        <Header />
+        <Header onAboutConductor={this.openCard} />
         {this.renderPhase(snap)}
+        {card}
       </div>
     );
   }
@@ -279,6 +302,11 @@ class TrolleyPanelBase extends React.Component {
           <div style={{ fontSize: "9px", color: "#6a4a38", marginTop: "8px", fontStyle: "italic" }}>
             your {snap.playerBets.length > 0 ? snap.playerBets.length + " bet(s) are locked" : "spectatorship is noted (appreciated, billable later)"} — the verdict was scheduled before this sentence (§4.2, §5.5(b))
           </div>
+          {/* #43 (ai-layer §2): "reasoning trace available on request (requests
+              are mood-dependent)" — the request resolves at the model card. */}
+          {this.firstDelibLink(snap) && (
+            <button onClick={this.openCard} style={{ marginTop: "6px", background: "none", border: "none", color: "#4a8aa8", fontSize: "9px", cursor: "pointer", textDecoration: "underline", padding: 0, fontStyle: "italic" }}>{MODEL_CARD_TRACE_LINK}</button>
+          )}
         </div>
       );
     }

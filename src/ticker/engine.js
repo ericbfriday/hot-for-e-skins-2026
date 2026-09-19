@@ -71,6 +71,11 @@ export const JUNK_TEMPLATES = [
   "{n}'s conviction doubled into the Third Track (the Fund thanks them)",
   "{n} requested a deliberation (the AI is always in)",
   "the Utilitarian Fund now holds {bb} BB of best intentions (est. $0.00)",
+  // #43 AI layer (spec §3-adjacent + §6 moderation theater): the AI batch's
+  // ambient pool additions — appeals are analyzed (denied (§4.1)), and the
+  // conductor's reasoning is available in card form.
+  "{n}'s appeal was analyzed (denied (§4.1))",
+  "the conductor's reasoning trace is available on request (requests are mood-dependent)",
 ];
 
 // House/cast lines (§2 tier 8%). Cast entries render with badge + cast color.
