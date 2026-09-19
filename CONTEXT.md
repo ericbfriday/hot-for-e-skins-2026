@@ -145,3 +145,6 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **The Undreamed™**: the Foundry's reel-only unwinnable — the one skin the AI cannot generate (it must be earned; it cannot be earned). The Karambit's dreamt rhyme.
 - **Prompt receipt**: every Dreamed Asset's proof of slop — the prompt it was dreamt from, verbatim, too fast to read at render time and too sad to reread after.
 - **REMIX**: the Foundry's duplicate protection theater — duplicates return palette-swapped and rebranded (Remix #{n}), still yours, technically new. Novelty: estimated.
+- **SkinChain™**: the house's chain — genesis 847 days ago, latest block 0, and everything you ever earned is on it, pending (§6.1). The explorer is a courtesy; courtesy is pending.
+- **Grief**: the SkinChain™'s native gas — unacquirable, unspendable, unholdable, and always 21,000 of it. Tipping it generates gratitude and nothing else.
+- **The mempool**: the SkinChain™'s waiting room — 847 pending transactions ahead of yours, reconfirming out of order while your position improves (est.) at position 848 of 848.
