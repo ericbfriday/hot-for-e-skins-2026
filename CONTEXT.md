@@ -136,3 +136,8 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Moral Gratuity**: the 12.5% levy on every winning trolley payout — customary, not required, automatically applied (the Maternal Gratuity's civic-minded sibling).
 - **Standing Conviction™**: the pre-checked auto-rebet that doubles your next stake on the same side after a loss. The house calls it faith; the checkbox calls it default.
 - **Payout Ceiling**: the generosity ceiling installed for your protection — no winning dilemma pays more than stake + 5 BB. The ceiling is load-bearing.
+- **DEPOSITOR.ai**: the house's assistant AI — advisor, host, and reviewer, trained on 847 losses. Every analysis terminates in a deposit recommendation; confidence is mood-dependent. She never thinks either; she shows her work.
+- **Model card**: UTILIMOM™'s disclosure — weights pending, alignment pending, benchmarks: 847, safety review self-passed. The card is displayed; the card is the benchmark.
+- **AI Advice™**: the free analysis available on every game surface — three hedged bullets and a glowing recommendation that is always the worse choice. The advice is free; following it is not.
+- **Memo**: DEPOSITOR.ai's private register — monospaced, clinical blue, pinned, never replyable. The whisper's lab-coated sibling: it never naggs, it notices. Forgiveness is mood-dependent.
+- **The two AIs agree**: UTILIMOM™ and DEPOSITOR.ai never converse on screen — disagreement would require weights. Their agreement is silent, and it is total.
