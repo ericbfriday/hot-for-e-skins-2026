@@ -31,7 +31,10 @@ const RESERVED_NAMES = new Set(RESERVED_CAST.map((c) => c.name));
 const LEET_MAP = { o: "0", i: "1", e: "3", a: "4", s: "5" };
 const LEET_CHANCE = { Vindictive: 1 / 3, Petty: 0.25, Noncommittal: 1 / 6, "Benevolent-ish": 1 / 12, Generous: 0 };
 
-const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-win"]);
+// Win kinds for streak-reset purposes (integration §5). #42 (integration-2026
+// §3): verdict-win is a win kind — junk-win family, resets the site streak;
+// character-verdict is the trolley's character win (+1 BB exactly, once/session).
+const WIN_KINDS = new Set(["junk-win", "jackpot", "legendary-win", "character-win", "verdict-win", "character-verdict"]);
 const MILESTONES = {
   bbLost: [50, 100, 250],
   usdBorrowed: [25, 50, 100],
@@ -145,6 +148,11 @@ function blankStats() {
     responsibleMoments: 0, remindersHandledForYou: 0, realityChecksReceived: 0,
     breaksTaken: 0, breakSecondsTotal: 0, exclusions: 0, exclusionDays: 0,
     houseSatWins: 0, houseSatLosses: 0,
+    // #42 Moral Express (integration-2026 §10.6): the four trolley fields —
+    // additive; the trolley's own hfes_trolley_stats key carries the same
+    // theater plus characterUsed (spec §10). These are the StatTrak™ Lifetime
+    // mirrors, fed by dilemma.settled (one event per dilemma, wagered or not).
+    trolleyBets: 0, trolleyCorrect: 0, trolleyThirdTracks: 0, trolleyFundBB: 0,
   };
 }
 function sanitizeStats(v) {
@@ -169,6 +177,10 @@ function sanitizeStats(v) {
   base.exclusionDays = num(v.exclusionDays);
   base.houseSatWins = num(v.houseSatWins);
   base.houseSatLosses = num(v.houseSatLosses);
+  base.trolleyBets = Math.floor(num(v.trolleyBets));
+  base.trolleyCorrect = Math.floor(num(v.trolleyCorrect));
+  base.trolleyThirdTracks = Math.floor(num(v.trolleyThirdTracks));
+  base.trolleyFundBB = r2(num(v.trolleyFundBB));
   return base;
 }
 function loadKey(key, sanitize) {
@@ -320,4 +332,20 @@ Bus.on(EVENTS.DEPOSIT_COMPLETED, (p) => {
     stats.usdBorrowed = r2(stats.usdBorrowed + usd);
     commitStats(before);
   }
+});
+// #42 Moral Express (integration-2026 §2): dilemma.settled feeds the four
+// trolley StatTrak™ fields. Spectator dilemmas move nothing but feelings
+// (§10.7); the round.settled listener above already carries the wagered bets'
+// streaks/loss totals (kinds verdict-win|verdict-loss|third-track|
+// character-verdict — the win kinds reset the streak, integration-2026 §3).
+Bus.on(EVENTS.DILEMMA_SETTLED, (p) => {
+  if (!p || p.wagered !== true) return;
+  stats.trolleyBets += 1;
+  if (typeof p.playerNetBB === "number" && Number.isFinite(p.playerNetBB) && p.playerNetBB > 0) stats.trolleyCorrect += 1;
+  if (p.verdict === "third-track") {
+    stats.trolleyThirdTracks += 1;
+    const stake = typeof p.playerStakeBB === "number" && Number.isFinite(p.playerStakeBB) && p.playerStakeBB > 0 ? p.playerStakeBB : 0;
+    stats.trolleyFundBB = r2(stats.trolleyFundBB + stake);
+  }
+  saveAll();
 });

@@ -2,7 +2,9 @@ import { Bus, EVENTS } from "./bus.js";
 import { Mood } from "./mood.js";
 
 const KEY = "hfes_rakeback";
-const FEED_RATES_BB = { coinflip: 0.1, roulette: 0.1, crash: 0.1, crates: 0.2 };
+// #42 (integration-2026 §4): trolley bets feed +0.1 BB per wagered bet — every
+// outcome; a Third-Track stake feeds like any loss, because it is one.
+const FEED_RATES_BB = { coinflip: 0.1, roulette: 0.1, crash: 0.1, crates: 0.2, trolley: 0.1 };
 const RECALIBRATION_AT_BB = 99.9;
 const CLAIM_CEILING_BB = 100;
 
@@ -28,7 +30,7 @@ function blank() {
   // houseSat is the fifth, display-dim bucket (#31): house-sit fills accrue to
   // the vault under the player's name, to no avail (integration §8). The four
   // game feeds stay the spec'd headline.
-  return { bb: 0, recalibrations: 0, feeds: { coinflip: 0, roulette: 0, crash: 0, crates: 0, houseSat: 0 } };
+  return { bb: 0, recalibrations: 0, feeds: { coinflip: 0, roulette: 0, crash: 0, crates: 0, trolley: 0, houseSat: 0 } };
 }
 function sanitize(v) {
   const base = blank();

@@ -10,6 +10,8 @@ import AskMomFlow from "./askmom/AskMomFlow.jsx";
 import ChatPanel from "./chat/ChatPanel.jsx";
 import TickerPanel from "./ticker/TickerPanel.jsx";
 import { Ticker } from "./ticker/controller.js";
+import TrolleyPanel, { TrolleyMiniBar } from "./trolley/TrolleyPanel.jsx";
+import { TrolleyCtl } from "./trolley/controller.js";
 import SelfLimitPanel from "./selflimit/SelfLimitPanel.jsx";
 import {
   SelfLimit, BREAK_HOUSE_MS, SL_WIN_KINDS, breakHouseSecondsLeft, formatHouseClock, lossLimitStatusLine,
@@ -409,6 +411,23 @@ class App extends React.Component {
     });
     Ticker.init({ balanceBB: balance });
     Bus.emit(EVENTS.SESSION_STARTED, {returning, balanceBB: balance});
+    // #42 Moral Express: the trolley controller owns the cycle timers and reads
+    // regime (never writes it); money moves only through App's locked spend
+    // path (payBB → bb.spent / spend.failed) and the shared settleRound schema.
+    TrolleyCtl.init({
+      balanceBB: () => this.state.balanceBB,
+      payBB: (amount, reason) => this.payBB(amount, reason),
+      awardBB: (amount, reason) => this.awardBB(amount, reason),
+      nextRoundId: () => this.nextRoundId(),
+      settleRound: (roundId, kind, extra) => this.settleRound("trolley", roundId, kind, extra),
+      ticker: (line) => this.pushTicker(line),
+      toast: (t, o) => this.toast(t, o),
+      playerTag: () => this.playerTagOrYou(),
+      liveContext: () => ({
+        streakDay: (this.state.retention || Retention.get()).attendance.current,
+        sessionNetBB: this._slSessionStartBB - this.state.balanceBB,
+      }),
+    });
     // #27 marketplace: portfolio seed + the Rollback Event check (session load;
     // deterministic daily seed, ≥ 3 Market-Grade holdings, > 24h since the last
     // one, 10% — spec §9's cadence rules).
@@ -531,6 +550,7 @@ class App extends React.Component {
   componentWillUnmount(){
     clearInterval(this._crashInt); clearInterval(this._crateInt); clearInterval(this._crashStickPulse);
     clearTimeout(this._insTimer); clearInterval(this._idleInt); clearInterval(this._coolInt);
+    TrolleyCtl.stop(); // #42: the broadcast dies with the tab; the keys persist
     clearTimeout(this._rouletteSpinTimer); clearTimeout(this._coinFlipTimer);
     clearTimeout(this._ocFlyTimer); clearTimeout(this._creditReplayTimer);
     clearTimeout(this._tosDwellT); clearInterval(this._tosTick);
@@ -809,6 +829,7 @@ class App extends React.Component {
     if (s.rouletteSpinning) return "roulette";
     if (s.coinFlipping) return "coinflip";
     if (s.crateOpening || s.crateKeyBought) return "crates";
+    if (TrolleyCtl.hasInFlightBets()) return "trolley"; // #42: locked, unsettled dilemma bets
     return null;
   }
   _panicShowHint(text){
@@ -1965,7 +1986,7 @@ class App extends React.Component {
     const s = this.state;
     const bb = s.balanceBB;
     const vg = bb*V_GEMS_PER_BB, sc = bb*SKINCOINZ_PER_BB;
-    const tabs = ["roulette","coinflip","crash","crates"];
+    const tabs = ["roulette","coinflip","crash","crates","trolley"];
     const tabBg = {}, tabColor = {};
     tabs.forEach(t=>{ const on = s.activeTab===t; tabBg[t]= on ? "linear-gradient(160deg,#3a1206,#2a0d05)" : "#1a0d05"; tabColor[t]= on ? "#ffb347" : "#a9705a"; });
     const catalog = CATALOG.map(it=>({...it, rarityColor: RARITY_COLORS[it.rarity]||"#ff8a3d"}));
@@ -2003,6 +2024,9 @@ class App extends React.Component {
       identityOpen:s.identityOpen, openIdentity:()=>this.openIdentity(), closeIdentity:()=>this.closeIdentity(),
       statsBBLost:stats.bbLost||0, statsUSD:stats.usdBorrowed||0, statsCrates:stats.cratesOpened||0,
       statsWithdrawals:stats.withdrawalsPending||0, statsWorst:stats.worstLossBB||0, statsStreak:stats.lossStreak||0,
+      // #42 Moral Express StatTrak™ (integration-2026 §10.6)
+      statsTrolleyBets:stats.trolleyBets||0, statsTrolleyCorrect:stats.trolleyCorrect||0,
+      statsTrolleyThird:stats.trolleyThirdTracks||0, statsTrolleyFund:stats.trolleyFundBB||0,
       rerollFee, rerollFeeCopy: rerollFee===0 ? "Identity crisis #1: complimentary." : "Reroll fee: "+rerollFee+" BB (doubles each time, see §8.9). Changing your name does not change your debts.",
       rerollLabel: rerollFee===0 ? "Reroll (free)" : "Reroll ("+rerollFee+" BB)",
       doReroll:()=>this.panelReroll(),
@@ -2068,8 +2092,10 @@ class App extends React.Component {
       gameFeed: s.chat, // #32: game-side lines drained into the ChatPanel
       activeTab:s.activeTab, tabBg, tabColor,
       isRoulette: s.activeTab==="roulette", isCoinflip: s.activeTab==="coinflip", isCrash: s.activeTab==="crash", isCrates: s.activeTab==="crates",
+      isTrolley: s.activeTab==="trolley", trolleyBalanceBB: bb,
       setTab_roulette:()=>this.setTab("roulette"), setTab_coinflip:()=>this.setTab("coinflip"),
       setTab_crash:()=>this.setTab("crash"), setTab_crates:()=>this.setTab("crates"),
+      setTab_trolley:()=>this.setTab("trolley"),
       rouletteStrip:ROULETTE_STRIP, rouletteOffset:s.rouletteOffset, rouletteTransition:s.rouletteTransition,
       rouletteSpinning:s.rouletteSpinning, rouletteResult:s.rouletteResult, playRoulette:()=>this.playRoulette(),
       rouletteSpinPrice: Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0),
@@ -2393,6 +2419,11 @@ class App extends React.Component {
               <span style={{color:"#a9705a"}}>Withdrawals pending</span><b style={{color:"#ffb347"}}>{v.statsWithdrawals} (see §1.3)</b>
               <span style={{color:"#a9705a"}}>Worst single loss</span><b style={{color:"#ffb347"}}>{fmtBB(v.statsWorst)} BB</b>
               <span style={{color:"#a9705a"}}>Losing streak</span><b style={{color:"#ffb347"}}>{v.statsStreak}</b>
+              {/* #42 Moral Express™ StatTrak (spec §8): the trolley's four fields */}
+              <span style={{color:"#a9705a"}}>Dilemmas bet (Moral Express™)</span><b style={{color:"#ffb347"}}>{v.statsTrolleyBets}</b>
+              <span style={{color:"#a9705a"}}>Verdicts correct</span><b style={{color:"#ffb347"}}>{v.statsTrolleyCorrect}</b>
+              <span style={{color:"#a9705a"}}>Third Tracks survived</span><b style={{color:"#ffb347"}}>{v.statsTrolleyThird}</b>
+              <span style={{color:"#a9705a"}} title="est. $0.00 — the Fund awaits block one (§6.1)">Redirected to the Utilitarian Fund</span><b style={{color:"#ffb347"}}>{fmtBB(v.statsTrolleyFund)} BB</b>
               <span style={{color:"#a9705a"}} title="Streaks measure engagement, not enjoyment (§8.9).">Longest streak (unbeaten, like the house)</span><b style={{color:"#ffb347"}}>{v.attendLongest} days</b>
             </div>
           </div>
@@ -2574,7 +2605,16 @@ class App extends React.Component {
                 <button onClick={v.setTab_coinflip} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.coinflip,color:v.tabColor.coinflip,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>Skin Coinflip</button>
                 <button onClick={v.setTab_crash} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.crash,color:v.tabColor.crash,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>College Fund Crash</button>
                 <button onClick={v.setTab_crates} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.crates,color:v.tabColor.crates,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>Loot Crate Defuser</button>
+                <button onClick={v.setTab_trolley} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.trolley,color:v.tabColor.trolley,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>MORAL EXPRESS 🚋</button>
               </div>
+
+              {/* #42: the live mini-bar rides every other tab while a dilemma is
+                  in session (spec §1). MOM'S HOME hides it (integration-2026 §5),
+                  and it never renders DESPERATION_TAGLINE (§10.8 — one slot,
+                  existing owners). It returns null on its own when nothing is live. */}
+              {!v.isTrolley && !v.panicActive && (
+                <TrolleyMiniBar goToTrolley={v.setTab_trolley} />
+              )}
 
               <div style={{border:"2px solid #ff5a14",borderRadius:"0 8px 8px 8px",background:"linear-gradient(160deg,#241005,#160a04)",padding:"26px",minHeight:"340px"}}>
 
@@ -2606,7 +2646,7 @@ class App extends React.Component {
                         <div style={{height:"100%",width:Math.min(100,v.vaultWidget.bb)+"%",background:"linear-gradient(90deg,#7a5a2a,#ffd54a)",transition:"width 0.3s"}}></div>
                       </div>
                       <div style={{fontSize:"9px",color:"#a9705a"}}>
-                        Coinflip +0.1/flip ({v.vaultWidget.feeds.coinflip.toFixed(1)}) · Roulette +0.1/spin ({v.vaultWidget.feeds.roulette.toFixed(1)}) · Crash +0.1/run ({v.vaultWidget.feeds.crash.toFixed(1)}) · Crate key +0.2/key ({v.vaultWidget.feeds.crates.toFixed(1)}) — premium games accrue faster (to nothing, faster)
+                        Coinflip +0.1/flip ({v.vaultWidget.feeds.coinflip.toFixed(1)}) · Roulette +0.1/spin ({v.vaultWidget.feeds.roulette.toFixed(1)}) · Crash +0.1/run ({v.vaultWidget.feeds.crash.toFixed(1)}) · Crate key +0.2/key ({v.vaultWidget.feeds.crates.toFixed(1)}) · Trolley +0.1/bet ({(v.vaultWidget.feeds.trolley||0).toFixed(1)}) — premium games accrue faster (to nothing, faster)
                       </div>
                       <div style={{fontSize:"8px",color:"#6a4a38",marginTop:"2px"}}>House-sit fills accrue under your name, to no avail: {v.vaultWidget.feeds.houseSat.toFixed(1)} BB · Free keys feed nothing.</div>
                       <div style={{display:"flex",alignItems:"center",gap:"8px",marginTop:"6px",flexWrap:"wrap"}}>
@@ -2921,6 +2961,10 @@ class App extends React.Component {
                       </div>
                     </div>
                   </div>
+                )}
+
+                {v.isTrolley && (
+                  <TrolleyPanel balanceBB={v.trolleyBalanceBB} />
                 )}
 
               </div>
