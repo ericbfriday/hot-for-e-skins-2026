@@ -364,6 +364,14 @@ const CUES = {
     pluck(ctx, houseBus, { t: t + 0.08, freq: 1975, gain: 0.022 * v, dur: 0.6 });
     tone(ctx, houseBus, { t: t + 0.02, f0: 340, f1: 300, glide: 0.35, gain: 0.018 * v, attack: 0.1, decay: 0.4, lp: 900 });
   } },
+  // #43 AI layer: the memo's notice chime — the whisper's sibling, one family
+  // over (ai-layer §5). Two soft clinical blips, quieter than MOM's chime, on
+  // the player bus: DEPOSITOR.ai is service, not MOM — her notices are muteable
+  // (the mute contract covers "your sounds"; the memo is addressed to you).
+  "ai.memo": { dur: 0.5, make(t, v) {
+    tone(ctx, layers[3], { t, f0: 1244, gain: 0.026 * v, attack: 0.004, hold: 0.06, decay: 0.1, lp: 3000 });
+    tone(ctx, layers[3], { t: t + 0.14, f0: 1661, gain: 0.022 * v, attack: 0.004, hold: 0.06, decay: 0.12, lp: 3200 });
+  } },
   // #32 (audio-gags §3, the chat micro-texture #26/#30 left unwired):
   "chat.tap": { dur: 0.35, make(t, v) { // crowd taps: quiet typewriter taps, persona-typed (hype kids slightly louder — the caller scales v)
     for (let i = 0; i < 3; i++) {

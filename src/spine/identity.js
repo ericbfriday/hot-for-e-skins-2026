@@ -13,6 +13,11 @@ export const RESERVED_CAST = [
   { name: "MOD_Chad_Official", badge: "[MOD]", color: "#8fd97a" },
   { name: "AdminTradeBot_69", badge: "[BOT]", color: "#e24a4a" },
   { name: "MOM", badge: "[VIP HOST]", color: "#ff9ad5" },
+  // #43 AI layer (integration-2026 §1 — the ONE spine edit beyond additive
+  // fields): the [AI] badge rides the reserved-cast entry shape exactly as
+  // [BOT] does. Clinical lab-coat blue #7fd4ff (§10.2 — outside every persona
+  // color; MOD owns the green). Never assigned to real players.
+  { name: "DEPOSITOR.ai", badge: "[AI]", color: "#7fd4ff" },
 ];
 
 const POOL_A = ["QuickScope", "NoScope", "Yeet", "Sweat", "Clutch", "Lag", "Tilt", "Snipe", "Grind", "Mash", "Flick"];
@@ -41,6 +46,10 @@ const MILESTONES = {
   cratesOpened: [10, 50],
   withdrawalsPending: [1],
   lossStreak: [3, 5, 7],
+  // #43 AI layer (ai-layer §9; integration-2026 §10.6): the leak joins chat's
+  // once-per-identity trigger list — "{tag} has received 25 AI analyses (all
+  // conclusive (est.))".
+  aiAnalyses: [25],
 };
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -153,6 +162,10 @@ function blankStats() {
     // theater plus characterUsed (spec §10). These are the StatTrak™ Lifetime
     // mirrors, fed by dilemma.settled (one event per dilemma, wagered or not).
     trolleyBets: 0, trolleyCorrect: 0, trolleyThirdTracks: 0, trolleyFundBB: 0,
+    // #43 AI layer (integration-2026 §10.6): AI analyses received — every AI
+    // Advice™ press (card or one-liner) counts; the milestone leak at 25 rides
+    // MILESTONES + chat's once-per-identity flags.
+    aiAnalyses: 0,
   };
 }
 function sanitizeStats(v) {
@@ -181,6 +194,7 @@ function sanitizeStats(v) {
   base.trolleyCorrect = Math.floor(num(v.trolleyCorrect));
   base.trolleyThirdTracks = Math.floor(num(v.trolleyThirdTracks));
   base.trolleyFundBB = r2(num(v.trolleyFundBB));
+  base.aiAnalyses = Math.floor(num(v.aiAnalyses)); // #43
   return base;
 }
 function loadKey(key, sanitize) {
@@ -263,13 +277,17 @@ export const Identity = {
   },
   getStats() { return { ...stats }; },
   // #29 self-limit: plain additive bumps on the extended StatTrak™ fields.
-  // No milestone emission — chat owns the limit leaks via limit.event flags.
+  // Chat owns the limit leaks via limit.event flags. #43: bumps are now
+  // milestone-aware through commitStats — MILESTONES gates which fields may
+  // emit (the self-limit fields have no entries, so nothing new fires for
+  // them; aiAnalyses leaks at 25 through the shared once-per-identity path).
   addStat(field, delta) {
     if (!(field in stats)) return;
+    const before = { ...stats };
     const next = r2((stats[field] || 0) + (delta || 0));
     if (next === stats[field]) return;
     stats[field] = next;
-    saveAll();
+    commitStats(before);
   },
   maxStat(field, value) {
     if (!(field in stats)) return;

@@ -127,12 +127,14 @@ export const RAIN_INELIGIBLE_LINE = "You were eligible for 0.0s of rain (rounded
 export const RAIN_KEYWORD_LINE = "Rain is region-locked (your region: no)";
 
 // #42 Moral Express (spec §9): during windows the room bets loudly, all wrong.
-// The DEPOSITOR.ai line is deliberately absent — that persona arrives with the
-// AI layer (ticket #43) and will close the mob per integration-2026 §6.
-// Order: personas first, MOD last (the pile-on canon).
+// #43 AI layer (integration-2026 §6): the documented gap is filled — personas
+// first, DEPOSITOR.ai second (the analysis closes the mob), MOD last (the
+// pile-on canon). Her line is spec #43 verbatim; the [AI] badge matches the
+// reserved-cast entry in spine/identity.js.
 export const TROLLEY_WINDOW_LINES = [
   { user: "Timmy_Second_Mortgage", color: "#e8c9ac", msg: "ALL IN ON SPLASH the trolley respects commitment" },
   { user: "doomer_greg", color: "#8a7a9a", msg: "third track incoming. as scheduled 📉" },
+  { user: "DEPOSITOR.ai", color: "#7fd4ff", badge: "[AI]", msg: "Analysis: both tracks are valid. One of them is depositor-friendly. (guess)" },
   { user: "MOD_Chad_Official", color: "#8fd97a", badge: "[MOD]", msg: "the AI has never been wrong (verification pending)" },
 ];
 

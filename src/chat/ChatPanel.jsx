@@ -5,6 +5,14 @@ import { Identity, RESERVED_CAST, YOU_COLOR } from "../spine/identity.js";
 import { POPULATION } from "../spine/constants.js";
 import { HouseBand, BAND_PRIORITIES } from "../spine/band.js";
 import { Retention, COPY as RETENTION_COPY } from "../retention/state.js";
+// #43 AI layer (ai-layer §3/§5/§6; integration-2026 §6/§10.1): DEPOSITOR.ai's
+// ambient cadence, keyword funnel tier, Memo register, and AI-reviewed MOD.
+import {
+  DEPOSITOR_NAME, DEPOSITOR_COLOR, DEPOSITOR_AMBIENT_DECK, DEPOSITOR_MOOD_BEAT_INDEX,
+  DEPOSITOR_AMBIENT_INTERVAL_MS, aiFunnelLine, AI_RIGGED_ANALYSIS,
+  MOD_AI_REVIEW_FOOTER, APPEAL_TOAST, MEMO_COPY, memoAllowed, memoFireTime, fillDepositor,
+} from "../ai/decks.js";
+import { bumpMemosSent, bumpAppealsFiled } from "../ai/state.js";
 import { createPersonaSession, pickArchetype, pickLine } from "./personas.js";
 import {
   SCROLLBACK_MAX, FADE_MS, ARCHIVE_MS, ARCHIVE_LINE,
@@ -58,6 +66,9 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
   const rainUntilRef = useRef(0);          // eligibility window ("if you interact")
   const rainEligSaidRef = useRef(false);
   const seenGameIdsRef = useRef(new Set()); // #32: gameFeed bridge drain state
+  const lastWhisperAtRef = useRef(0);      // #43: memo staggering vs MOM whispers
+  const lastMemoAtRef = useRef(0);         // #43: the Memo's 10-minute cap
+  const depositorUntilRef = useRef(0);     // #43: ambient cadence, one per ~90s
 
   const nextId = useCallback(() => { idRef.current += 1; return idRef.current; }, []);
 
@@ -81,7 +92,19 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     // The audible layer: a soft close-mic'd breath-chime, above the crowd,
     // bypassing the mute (audio-gags §3 — "it's intimate like that").
     HouseBand.play("mom.whisper", { priority: BAND_PRIORITIES.P3_SOCIAL });
+    lastWhisperAtRef.current = Date.now(); // #43: the house staggers its love (memo gap)
     return pushEntry({ user: "MOM", badge: "[VIP HOST]", color: "#ff9ad5", msg: text, whisper: true, pinned: true, ...extra });
+  }, [pushEntry]);
+
+  // #43 The Memo register (ai-layer §5; integration-2026 §10.1): the Whisper's
+  // sibling — monospaced, clinical blue, pinned (exempt from decay, like every
+  // pinned entry), never replyable (no click handler, no cursor). It notices;
+  // it never naggs. Service, not interruption (integration-2026 §5).
+  const pushMemo = useCallback((text) => {
+    HouseBand.play("ai.memo", { priority: BAND_PRIORITIES.P3_SOCIAL, volume: 0.8 });
+    lastMemoAtRef.current = Date.now();
+    bumpMemosSent();
+    return pushEntry({ user: DEPOSITOR_NAME, badge: "[AI]", color: DEPOSITOR_COLOR, msg: text, memo: true, pinned: true });
   }, [pushEntry]);
 
   const pushAmbientLine = useCallback((text, archetypeOverride) => {
@@ -136,6 +159,47 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     return t;
   }, []);
 
+  // #43 Memo scheduling: staggered past any MOM whisper (never within 60s —
+  // different speakers may stack, but the house staggers its love), re-checked
+  // against the quiet window and the 10-minute cap at fire time. A blocked
+  // notice was never noticed.
+  const maybeMemo = useCallback((kind, vars, baseDelayMs) => {
+    const now = Date.now();
+    const fireAt = memoFireTime({ now, baseDelayMs, lastWhisperAt: lastWhisperAtRef.current });
+    addTimer(() => {
+      if (!memoAllowed({
+        now: Date.now(),
+        lastMemoAt: lastMemoAtRef.current,
+        lastWhisperAt: lastWhisperAtRef.current,
+        quietUntil: quietUntilRef.current,
+      })) return;
+      pushMemo(fillDepositor(MEMO_COPY[kind], vars));
+    }, Math.max(0, fireAt - now));
+  }, [addTimer, pushMemo]);
+
+  // #43 DEPOSITOR.ai ambient cadence (ai-layer §3): low-rate, one line per
+  // deposit-adjacent beat, capped at one per ~90s, stacking BEHIND personas —
+  // she is never the first to pile on; she is the analysis, not the mob. She
+  // never speaks during the quiet window (she schedules around it; the cap is
+  // consumed only when the line lands).
+  const maybeDepositor = useCallback((line, delayMs) => {
+    addTimer(() => {
+      const now = Date.now();
+      if (now < quietUntilRef.current) return;
+      if (now < depositorUntilRef.current) return;
+      depositorUntilRef.current = now + DEPOSITOR_AMBIENT_INTERVAL_MS;
+      pushCast(DEPOSITOR_NAME, line);
+    }, delayMs);
+  }, [addTimer, pushCast]);
+
+  const depositorAmbientLine = useCallback((beat) => {
+    const vars = { word: Mood.word() };
+    const idx = beat === "mood"
+      ? DEPOSITOR_MOOD_BEAT_INDEX
+      : Math.floor(Math.random() * DEPOSITOR_AMBIENT_DECK.length);
+    return fillDepositor(DEPOSITOR_AMBIENT_DECK[idx], vars);
+  }, []);
+
   const triggerQuietWindow = useCallback(() => {
     const dur = QUIET_WINDOW_MIN_MS + Math.random() * (QUIET_WINDOW_MAX_MS - QUIET_WINDOW_MIN_MS);
     quietUntilRef.current = Date.now() + dur;
@@ -150,7 +214,14 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
   const triggerWinSequence = useCallback(() => {
     // §10: the room lets a fake win breathe for ~3s, then MOD strikes it through.
     WIN_BREATHE_LINES.forEach((line, i) => addTimer(() => pushAmbientLine(line), 400 + i * 500));
-    addTimer(() => pushCast("MOD_Chad_Official", WIN_DELETE_LINE), 3000);
+    // #43 (ai-layer §6 + integration-2026 §2): the deletion gains the
+    // AI-review footer, and the chat emits mod.deleted {tag} — the one
+    // sanctioned bus emit from chat (the ruling mints it; deletions are
+    // settled facts). Consumers: the pass (#44); StatTrak (winsDeleted, #46).
+    addTimer(() => {
+      pushCast("MOD_Chad_Official", WIN_DELETE_LINE, { note: MOD_AI_REVIEW_FOOTER });
+      Bus.emit(EVENTS.MOD_DELETED, { tag: playerTag() });
+    }, 3000);
     addTimer(() => triggerQuietWindow(), 3200);
   }, [addTimer, pushAmbientLine, pushCast, triggerQuietWindow]);
 
@@ -183,6 +254,13 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       addTimer(() => {
         setEntries((prev) => prev.map((e) => (e.id === ownMsgId ? { ...e, struck: true, note: REDACTION_LINE } : e)));
       }, 1200);
+      // #43 (ai-layer §3/§6): "rigged" routes to a DEPOSITOR.ai analysis line
+      // too — after the strike, before the timeout (the analysis closes the
+      // mob; the truth-branch consequences are canon and unchanged).
+      addTimer(() => {
+        if (Date.now() < quietUntilRef.current) return; // she never speaks during the quiet window
+        pushCast(DEPOSITOR_NAME, AI_RIGGED_ANALYSIS);
+      }, 1650);
       addTimer(() => triggerTimeout("truth"), 1800);
       return true;
     }
@@ -203,17 +281,34 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     if (/\bminor\b/.test(t)) {
       minorStrikesRef.current += 1;
       const n = minorStrikesRef.current;
-      if (n === 1) addTimer(() => pushCast("MOD_Chad_Official", MINOR_ESCALATION[0]), 1200);
-      else if (n === 2) addTimer(() => pushCast("MOD_Chad_Official", MINOR_ESCALATION[1]), 1200);
+      // #43 (ai-layer §6): vibe violations gain the AI-review footer (the flag
+      // is the joke; behavior unchanged).
+      if (n === 1) addTimer(() => pushCast("MOD_Chad_Official", MINOR_ESCALATION[0], { note: MOD_AI_REVIEW_FOOTER }), 1200);
+      else if (n === 2) addTimer(() => pushCast("MOD_Chad_Official", MINOR_ESCALATION[1], { note: MOD_AI_REVIEW_FOOTER }), 1200);
       else addTimer(() => triggerTimeout("minor"), 1200);
       return true;
     }
     if (/momcode/i.test(t)) {
-      addTimer(() => pushCast("MOD_Chad_Official", "impersonating the owner is a Tier 1 vibe violation (he loves it though)"), 1400);
+      addTimer(() => pushCast("MOD_Chad_Official", "impersonating the owner is a Tier 1 vibe violation (he loves it though)", { note: MOD_AI_REVIEW_FOOTER }), 1400);
       return true;
     }
     if (/rain/.test(t)) {
       addTimer(() => pushCast("AdminTradeBot_69", RAIN_KEYWORD_LINE), 1300);
+      return true;
+    }
+    // #43 (ai-layer §3): the funnel gains an AI tier above MOD's — the
+    // deposit-adjacent keywords ("should i", "worth it", "odds", "how do i
+    // win") route to a DEPOSITOR.ai Analysis line. Placed after the richer
+    // branches so no landed behavior regresses (e.g. "should i ask mom" keeps
+    // its MOM pile); "rigged" keeps its truth-timeout above, with her analysis
+    // riding that branch. The funnel matches keywords, never meaning —
+    // unchanged; now it has a lab coat.
+    const aiLine = aiFunnelLine(trimmed);
+    if (aiLine) {
+      addTimer(() => {
+        if (Date.now() < quietUntilRef.current) return; // she never speaks during the quiet window
+        pushCast(DEPOSITOR_NAME, aiLine);
+      }, 1300);
       return true;
     }
     return false;
@@ -280,6 +375,15 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     pushEntry({ system: true, msg: WHISPER_NOT_REPLYABLE_LINE });
   };
 
+  // #43 (ai-layer §6): the timeout box's APPEAL button. Pressing it files the
+  // appeal (hfes_ai_flags) and toasts the analysis — the App owns the toast
+  // venue via hooks.appeal; the fallback line keeps chat self-sufficient.
+  const onAppeal = () => {
+    bumpAppealsFiled();
+    if (hooks.appeal) hooks.appeal();
+    else pushEntry({ system: true, msg: APPEAL_TOAST });
+  };
+
   // ---- Bus wiring (mount once) ----
   useEffect(() => {
     const offs = [];
@@ -307,6 +411,9 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
         if (-net >= 15 || (stats.lossStreak || 0) >= 5) {
           addTimer(() => pushCast("MOD_Chad_Official", "rough one. the house feels bad. deposits cheer everyone up."), 1200);
         }
+        // #43 (ai-layer §5): post-loss empathy — the Memo notices; the
+        // staggering rules (10-min cap, whisper gap, quiet window) do the pacing.
+        maybeMemo("postLoss", {}, 2600);
       }
     }));
 
@@ -341,6 +448,10 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       if (payload.firstEver && markFlag("firstDeposit")) {
         addTimer(() => pushCast("MOD_Chad_Official", tag + " made their first deposit. W come to mind."), 3200);
       }
+      // #43 (ai-layer §5): post-deposit gratitude — the memo stagger pushes it
+      // past the 2400ms refill whisper (the house staggers its love; gratitude
+      // arrives exactly 60s after hers does).
+      maybeMemo("postDeposit", { n: typeof payload.count === "number" && payload.count > 0 ? payload.count : 1 }, 2800);
     }));
 
     offs.push(Bus.on(EVENTS.ASKMOM_OPENED, () => {
@@ -356,6 +467,10 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
         pushAmbientLine(lines[i % lines.length]);
         i += 1;
       }, 6000 + Math.random() * 3000);
+      // #43 (ai-layer §3): askmom.opened is a deposit-adjacent beat — her line
+      // lands behind the pile's first persona line (the interval opens at
+      // 6–9s; she is the analysis, never the mob).
+      maybeDepositor(depositorAmbientLine(), 9500);
     }));
 
     offs.push(Bus.on(EVENTS.ASKMOM_ABANDONED, () => {
@@ -363,16 +478,44 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       addTimer(() => pushWhisper(MOM_WHISPER_DECK.abandoned), 400);
       addTimer(() => pushAmbientLine("she said no???"), 900);
       addTimer(() => pushCast("MOD_Chad_Official", "the responsible thing to do would've been yes."), 1500);
+      // #43: behind the whisper, the persona, and MOD — the pile closes.
+      maybeDepositor(depositorAmbientLine(), 2100);
     }));
 
     // #42 Moral Express (spec §9): the room erupts when a dilemma opens and
-    // bets loudly through the window, all wrong. Personas first, MOD last
-    // (pile-on canon, integration-2026 §6). The DEPOSITOR.ai line that closes
-    // the mob arrives with the AI layer (#43) — the gap is deliberate.
+    // bets loudly through the window, all wrong. Personas first, DEPOSITOR.ai
+    // second (the analysis closes the mob), MOD last — pile-on canon,
+    // integration-2026 §6; the TROLLEY_WINDOW_LINES gap is filled (#43).
     offs.push(Bus.on(EVENTS.DILEMMA_OPENED, () => {
       TROLLEY_WINDOW_LINES.forEach((line, i) => {
         addTimer(() => pushEntry({ user: line.user, badge: line.badge, color: line.color, msg: line.msg }), 900 + i * 1400);
       });
+    }));
+
+    // #43 (ai-layer §3): the third track is a deposit-adjacent beat — every
+    // stake on both sides was redirected to the Utilitarian Fund; she notices
+    // (spectator dilemmas too; the ethics were free, the analysis isn't).
+    offs.push(Bus.on(EVENTS.DILEMMA_SETTLED, (p) => {
+      if (p && p.verdict === "third-track") maybeDepositor(depositorAmbientLine(), 1800);
+    }));
+
+    // #43 (ai-layer §3): a failed spend is a deposit-adjacent beat (the
+    // intention was logged; intentions accrue).
+    offs.push(Bus.on(EVENTS.SPEND_FAILED, () => {
+      maybeDepositor(depositorAmbientLine(), 2200);
+    }));
+
+    // #43 (ai-layer §3): the mood-change beat — she reads the adjective and
+    // files it (midnight crossings only; the session-start notify is not a
+    // change, and she never opens the session's conversation).
+    offs.push(Bus.on(EVENTS.MOOD_CHANGED, (p) => {
+      if (p && p.crossedMidnight) maybeDepositor(depositorAmbientLine("mood"), 1500);
+    }));
+
+    // #43 (ai-layer §5): lapsed return — the first notice of a returning
+    // session. The absence was logged, analyzed, and forgiven.
+    offs.push(Bus.on(EVENTS.SESSION_STARTED, (p) => {
+      if (p && p.returning) maybeMemo("lapsed", {}, 4000);
     }));
 
     offs.push(Bus.on(EVENTS.WITHDRAWAL_CREATED, () => {
@@ -394,6 +537,10 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
         addTimer(() => pushAmbientLine(tag + "'s at 10 crates. the JPEGs are winning."), 500);
       } else if (p.field === "lossStreak" && p.value === 7 && markFlag("milestone:" + key)) {
         addTimer(() => pushAmbientLine("consistent king"), 500);
+      } else if (p.field === "aiAnalyses" && p.value === 25 && markFlag("milestone:" + key)) {
+        // #43 (ai-layer §9): the AI milestone leak joins the once-per-identity
+        // trigger list (hfes_chat_flags, identity canon extended additively).
+        addTimer(() => pushAmbientLine(tag + " has received 25 AI analyses (all conclusive (est.))"), 500);
       }
     }));
 
@@ -541,7 +688,12 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       const g = gameFeed[i];
       if (!g || !g._id || seen.has(g._id)) continue;
       seen.add(g._id);
-      if (g.whisper) HouseBand.play("mom.whisper", { priority: BAND_PRIORITIES.P3_SOCIAL });
+      // #43: gameFeed whispers (the 60s-idle MOM whisper) count toward the memo
+      // staggering gap too — one whisper source of truth, whatever the venue.
+      if (g.whisper) {
+        HouseBand.play("mom.whisper", { priority: BAND_PRIORITIES.P3_SOCIAL });
+        lastWhisperAtRef.current = Date.now();
+      }
       pushEntry({ user: g.user, badge: g.badge, color: g.color, msg: g.msg, whisper: !!g.whisper, pinned: !!g.pinned });
     }
   }, [gameFeed, pushEntry]);
@@ -597,6 +749,17 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
               </div>
             );
           }
+          // #43 (ai-layer §5; integration-2026 §10.1): the Memo register — the
+          // Whisper's sibling. Monospaced, clinical blue, pinned (the pinned
+          // flag already exempts it from fade and archive), never replyable
+          // (no handler, no pointer — clicking a memo files nothing).
+          if (e.memo) {
+            return (
+              <div key={e.id} style={{ fontFamily: "Consolas,'Courier New',monospace", fontSize: "10.5px", color: DEPOSITOR_COLOR, border: "1px solid #7fd4ff", borderRadius: "5px", padding: "5px 7px", margin: "4px 0", background: "#0a1420", lineHeight: 1.5 }}>
+                <b>MEMO FROM DEPOSITOR.ai</b><br />{e.msg}
+              </div>
+            );
+          }
           return (
             <div key={e.id} style={{ fontSize: "11px", color: "#c9a888", marginBottom: "5px", opacity: faded ? 0.35 : 1, textDecoration: e.struck ? "line-through" : "none" }}>
               <b style={{ color: e.color }}>{e.user}{e.badge ? " " + e.badge : ""}{e.isYou ? " (you)" : ""}:</b> {e.msg}
@@ -609,7 +772,11 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       <div style={{ marginTop: "8px" }}>
         {inTimeout ? (
           <div style={{ background: "#3a1010", border: "1px solid #e24a4a", borderRadius: "6px", padding: "8px 10px", fontSize: "11px", color: "#ffcf9a", textAlign: "center" }}>
-            TIMEOUT — reason: {timeoutReason} ({timeoutSecondsLeft}s)
+            <div>TIMEOUT — reason: {timeoutReason} ({timeoutSecondsLeft}s)</div>
+            {/* #43 (ai-layer §6): every MOD action is AI-reviewed; the flag is
+                the joke. The appeal is analyzed on receipt (§4.1). */}
+            <div style={{ fontSize: "9px", color: "#8fd97a", fontStyle: "italic", marginTop: "3px" }}>{MOD_AI_REVIEW_FOOTER}</div>
+            <button onClick={onAppeal} style={{ marginTop: "6px", background: "#3a2010", border: "1px dashed #8fd97a", color: "#c9f2b0", fontWeight: 800, fontSize: "10px", padding: "5px 12px", borderRadius: "6px", cursor: "pointer" }}>APPEAL</button>
           </div>
         ) : (
           <div>

@@ -31,6 +31,10 @@ export const EVENTS = {
   // "trolley", kinds verdict-win|verdict-loss|third-track|character-verdict).
   DILEMMA_OPENED: "dilemma.opened",
   DILEMMA_SETTLED: "dilemma.settled",
+  // #43 AI layer (integration-2026 §2): MOD's win-deletion path reports the
+  // settled fact. The one sanctioned bus emit from chat (the ruling mints it);
+  // consumers: pass (#44 seasonal quest), StatTrak (winsDeleted, later ticket).
+  MOD_DELETED: "mod.deleted",
 };
 
 const listeners = new Map();
