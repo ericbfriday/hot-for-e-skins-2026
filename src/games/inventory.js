@@ -52,6 +52,9 @@ export const Inventory = {
       float: typeof item.float === "number" ? item.float : undefined,
       receipt: item.receipt || undefined,
       receiptFor: item.receiptFor || undefined,
+      // #45: dreamed assets classify as Digital Assets before the catalog
+      // value check (see classifyAward) — the flag must ride the mint itself.
+      dreamed: item.dreamed === true ? true : undefined,
     });
     items = [entry, ...items].slice(0, 200);
     save(items);

@@ -131,6 +131,20 @@ body {
   60% { transform: translate(2px, 0); }
   100% { transform: translate(0, 0); }
 }
+/* #45 AI Skin Foundry: the dreamed asset's sparkle loop (subtle — the slop
+   must shimmer) and the prompt slam's too-fast-to-read flash (the prompt was
+   withheld for safety; the safety is also pending). */
+@keyframes dreamSparkle {
+  0%, 100% { opacity: 0.15; transform: scale(0.7); }
+  50% { opacity: 1; transform: scale(1.15); }
+}
+@keyframes dreamPromptFlash {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  40% { opacity: 0.08; }
+  65% { opacity: 0.85; }
+  100% { opacity: 0; }
+}
 
 /* Tab on the "PROVABLY FAIR" badge (style-before in the original artifact) */
 .fair-badge {

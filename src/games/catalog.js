@@ -81,6 +81,10 @@ export function floatFor(uid) {
 export function classifyAward(item) {
   if (!item) return { itemClass: "digital-asset", catalogId: null };
   if (item.receipt) return { itemClass: "receipt", catalogId: null };
+  // #45: dreamed assets are Digital Assets by decree (foundry §6), BEFORE the
+  // value check — dreamed values occasionally land exactly on a catalog
+  // baseline (a remix can round to $0.75), and no dream may become sellable.
+  if (item.dreamed === true) return { itemClass: "digital-asset", catalogId: null };
   const name = String(item.name || "");
   let cat = CATALOG.find((c) => c.name === name) || CATALOG.find((c) => c.short === name);
   if (!cat) {

@@ -11,6 +11,10 @@ import { Mood } from "../spine/mood.js";
 import { HouseBand, BAND_PRIORITIES } from "../spine/band.js";
 import { Inventory } from "./inventory.js";
 import { AWARD_POOL } from "./crates.js";
+// #45: the dreamed Trade-Up output (cheapest dream of the next tier) and the
+// dreamed inventory patch/provenance — one shape, two doors (App awards dreams
+// from the Foundry; the contract awards dreams here).
+import { cheapestDreamOfTier, dreamInventoryExtras, dreamProvenanceLines } from "./foundry.js";
 import {
   CATALOG, TIER_ORDER, WORST_WEAR, catalogById, hashString, mulberry32, fmtUSD, floatFor,
 } from "./catalog.js";
@@ -348,8 +352,12 @@ export const Market = {
   },
 
   // §8: the Trade-Up Contract (Patent Pending, Outcome Pending).
+  // #45 (foundry §6 / integration-2026 §10.11): the contract ALSO accepts
+  // dreamed Digital Assets — five same-tier dreams return the cheapest dream of
+  // the next tier. The only exit that pretends, for either currency of regret.
   contractEligible(entry) {
-    return !!entry && entry.itemClass === "market-grade" && !!entry.catalogId && !entry.tradeHold && !entry.listedForBB;
+    return !!entry && !entry.tradeHold && !entry.listedForBB
+      && (entry.itemClass === "market-grade" || entry.dreamed === true);
   },
   CONTRACT_ORIGINATION_BB: 5,
   MATERNAL_GRATUITY_BB,
@@ -358,30 +366,51 @@ export const Market = {
     const entries = uids.map((id) => Inventory.find(id)).filter(Boolean);
     if (entries.length !== 5 || entries.length !== uids.length) return { ok: false, reason: "requires 5 items" };
     if (!entries.every(Market.contractEligible)) return { ok: false, reason: "JPEGs, listed items, and trade-held items are not contractible (§8)" };
-    const tiers = new Set(entries.map((e) => catalogById(e.catalogId).rarity));
+    // Dreams and Market-Grade skins never mix in one contract — the market
+    // cannot price a dream, and the dream declines to be priced (§8.9).
+    const dreamCount = entries.filter((e) => e.dreamed === true).length;
+    if (dreamCount > 0 && dreamCount !== 5) return { ok: false, reason: "dreams don't mix with JPEGs (the contract is single-denomination, §8.9)" };
+    const tiers = new Set(entries.map((e) => (e.dreamed === true ? e.dreamBaseTier : catalogById(e.catalogId).rarity)));
     if (tiers.size !== 1) return { ok: false, reason: "requires 5 items of the same tier" };
-    return { ok: true, entries, tier: tiers.values().next().value };
+    return { ok: true, entries, tier: tiers.values().next().value, dreamed: dreamCount === 5 };
   },
   // Reel preview — same seed consumption as tradeUpOutcome's first draw, so
   // the decorative reel can aim at the pre-decided outcome (§4.2 reenactment)
-  // without mutating anything.
+  // without mutating anything. #45: dreamed contracts never photograph — the
+  // cheapest dream of the next tier is guaranteed (the only exit that pretends,
+  // and it pretends reliably).
   contractPreview(uids, now = new Date()) {
     const v = Market.contractValidate(uids);
     if (!v.ok) return null;
     const idx = TIER_ORDER.indexOf(v.tier);
     const nextTier = idx >= 0 && idx + 1 < TIER_ORDER.length ? TIER_ORDER[idx + 1] : null;
+    if (v.dreamed) return { tier: v.tier, nextTier, photo: false, dreamed: true };
     const rng = mulberry32(hashString(Mood.seed(now) + "#contract#" + uids.slice().sort().join(",")));
     const photo = !nextTier || nextTier === "Contraband Liability" || nextTier === "Covert Extravagance" || rng() < 0.15;
     return { tier: v.tier, nextTier, photo };
   },
   // Output: the cheapest item of the next tier up. Always. 15% of contracts
   // resolve to a Crate JPEG instead; never outputs the top two tiers.
+  // #45: dreamed contracts output the cheapest DREAM of the next tier
+  // (Contraband (Dreamed) → Covert Extravagance (Dreamed), the only Covert
+  // dream in existence — still Cash Value (est.) $0.00).
   tradeUpOutcome(uids, now = new Date()) {
     const v = Market.contractValidate(uids);
     if (!v.ok) return { ok: false, reason: v.reason };
     const idx = TIER_ORDER.indexOf(v.tier);
     const nextTier = idx >= 0 && idx + 1 < TIER_ORDER.length ? TIER_ORDER[idx + 1] : null;
-    const rng = mulberry32(hashString(Mood.seed(now) + "#contract#" + uids.slice().sort().join(",")));
+    const contractSeed = Mood.seed(now) + "#contract#" + uids.slice().sort().join(",");
+    if (v.dreamed) {
+      const out = cheapestDreamOfTier(nextTier || "Covert Extravagance", contractSeed, now);
+      for (const e of v.entries) Inventory.remove(e.id);
+      const entry = Inventory.award({ id: out.id, name: out.name, value: out.value, source: "foundry-contract", dreamed: true });
+      Inventory.update(entry.id, dreamInventoryExtras(out));
+      for (const line of dreamProvenanceLines(out)) Inventory.appendProvenance(entry.id, line);
+      Inventory.appendProvenance(entry.id, "Acquired: five same-tier dreams, consolidated (the only exit that pretends)");
+      return { ok: true, kind: "dream", name: out.name, tier: out.tier, value: out.value,
+        note: "the cheapest dream of the next tier (novelty: est. (est.))" };
+    }
+    const rng = mulberry32(hashString(contractSeed));
     const photo = !nextTier || nextTier === "Contraband Liability" || nextTier === "Covert Extravagance" || rng() < 0.15;
     const worstFloat = Math.max(...v.entries.map((e) => (typeof e.float === "number" ? e.float : floatFor(e.id))));
     for (const e of v.entries) Inventory.remove(e.id);
