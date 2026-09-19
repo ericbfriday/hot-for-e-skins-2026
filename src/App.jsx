@@ -62,6 +62,14 @@ import { Retention, COPY as RETENTION_COPY } from "./retention/state.js";
 // moves no BB, and emits nothing on the bus (integration-2026 §2).
 import AdviceChip from "./ai/AdviceChip.jsx";
 import { APPEAL_TOAST } from "./ai/decks.js";
+// #44 SkinChain™ (skinchain §1–§3): the dim "View on SkinChain™" links on the
+// escrow/withdrawal/settlement surfaces + the Fund's contract link, and the
+// explorer modal itself. The explorer moves no BB (Grief is unacquirable),
+// emits nothing on the bus (integration-2026 §2), and never renders during
+// MOM'S HOME.
+import SkinChainModal, { SkinChainLink } from "./skinchain/SkinChainModal.jsx";
+import { txViewFor, contractViewFor } from "./skinchain/explorer.js";
+import { SkinChain } from "./skinchain/state.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -250,6 +258,10 @@ class App extends React.Component {
     marketCheckout:null, marketFlicker:null, marketSig:"",
     marketAskFor:null, marketAskInput:"",
     contractSel:[], contractPhase:null, contractResult:null, contractScoot:false,
+
+    // #44 SkinChain™ — the open explorer view (tx or Fund contract); one modal
+    // at a time by construction (a single state slot). null = closed.
+    skinchainView:null,
 
     // Self-Limit Settings (#29) — the control room connected to nothing
     selflimitOpen:false, slLadder:0, slRefuseTip:false, slAskMomPending:null,
@@ -779,7 +791,9 @@ class App extends React.Component {
     };
     try { localStorage.setItem(PANIC_DISGUISE_KEY, JSON.stringify(record)); } catch (e) {} // survives tab close
     this._panicSwapDocMeta(disguise.subject, draftNo);
-    this.setState({panicActive:true, panicEssay:record, panicWordCount:this._panicStartWords, panicWelcome:null, panicFileMenu:false});
+    // #44: the explorer never appears during MOM'S HOME (§3) — cleared, not
+    // merely covered (the disguise hides everything; the receipt waits nowhere).
+    this.setState({panicActive:true, panicEssay:record, panicWordCount:this._panicStartWords, panicWelcome:null, panicFileMenu:false, skinchainView:null});
     this._panicStartWordTick();
     Bus.emit(EVENTS.PANIC_HIDDEN, {pressesToday:presses}); // P0: the Band severs the audio graph
   }
@@ -1020,7 +1034,9 @@ class App extends React.Component {
       rouletteReceiptOpen:false,
       rouletteFairness: {roundId, commitment, preimage, revealed:false, anyway:fairnessAnyway},
       rouletteFairnessOpen:false,
-      rouletteJackpotBox: kind==="jackpot" ? {item, cashoutClicked:false} : null,
+      // #44: wdId stamps the jackpot cash-out's stable receipt id (SkinChain™
+      // tx hashes derive from it; same id → same hash, forever).
+      rouletteJackpotBox: kind==="jackpot" ? {item, cashoutClicked:false, wdId:"wd-jackpot-"+roundId} : null,
       rouletteBannerNames: itemAward && !s.rouletteBannerNames.includes(tag) ? [tag, ...s.rouletteBannerNames].slice(0,7) : s.rouletteBannerNames,
     }));
 
@@ -1608,6 +1624,20 @@ class App extends React.Component {
     const l = Market.cancelListing(listingId);
     if (l) this.toast("Delisted. 3 BB Delisting Fee assessed. Item returned — relisted after public shame.");
   }
+
+  // ---- SkinChain™ explorer (#44; skinchain §1–§3) -----------------------------
+  // One modal at a time (single slot); dismissable; never opens during MOM'S
+  // HOME (the activation path also clears it). Opening counts a view in
+  // hfes_skinchain and a StatTrak™ chain check (the 50-leak rides chat's
+  // once-per-identity trigger list). Nothing else moves — the chain is a
+  // viewer for a pending that predates the viewer.
+  openSkinchainView(view){
+    if (this.state.panicActive) return;
+    SkinChain.bumpView();
+    Identity.addStat("chainChecks", 1);
+    this.setState({skinchainView: view});
+  }
+  closeSkinchain(){ this.setState({skinchainView:null}); }
   contractToggle(uid){
     this.setState(s => {
       const sel = s.contractSel.includes(uid) ? s.contractSel.filter(x => x !== uid) : [...s.contractSel, uid].slice(-5);
@@ -2039,6 +2069,8 @@ class App extends React.Component {
       // #42 Moral Express StatTrak™ (integration-2026 §10.6)
       statsTrolleyBets:stats.trolleyBets||0, statsTrolleyCorrect:stats.trolleyCorrect||0,
       statsTrolleyThird:stats.trolleyThirdTracks||0, statsTrolleyFund:stats.trolleyFundBB||0,
+      // #44 SkinChain™ StatTrak™ (integration-2026 §10.6)
+      statsChainChecks:stats.chainChecks||0,
       rerollFee, rerollFeeCopy: rerollFee===0 ? "Identity crisis #1: complimentary." : "Reroll fee: "+rerollFee+" BB (doubles each time, see §8.9). Changing your name does not change your debts.",
       rerollLabel: rerollFee===0 ? "Reroll (free)" : "Reroll ("+rerollFee+" BB)",
       doReroll:()=>this.panelReroll(),
@@ -2243,6 +2275,11 @@ class App extends React.Component {
       mkListings: Market.listings(), mkActive: Market.activeListings(),
       marketAcceptLowball:(id)=>this.marketAcceptLowball(id), marketCancelListing:(id)=>this.marketCancelListing(id),
       escrowCards: Market.escrow(), soldLedger: Market.soldLedger(),
+      // #44 SkinChain™ — the explorer view + its openers (tx views derive their
+      // hash from the receipt's stable id; the Fund links to its contract).
+      skinchainView:s.skinchainView, closeSkinchain:()=>this.closeSkinchain(),
+      openSkinchainTx:(id,label,valueBB)=>this.openSkinchainView(txViewFor({id,label,valueBB})),
+      openSkinchainContract:()=>this.openSkinchainView(contractViewFor(TrolleyCtl.snapshot().fundBB)),
       appealState: s.invAppeal, invAppealStart:(id)=>this.invAppealStart(id), invAppealClose:()=>this.invAppealClose(),
       contractSel:s.contractSel, contractChips: s.contractSel.map(id=>Inventory.find(id)).filter(Boolean),
       contractPhase:s.contractPhase, contractResult:s.contractResult, contractScoot:s.contractScoot,
@@ -2446,6 +2483,8 @@ class App extends React.Component {
               <span style={{color:"#a9705a"}}>Verdicts correct</span><b style={{color:"#ffb347"}}>{v.statsTrolleyCorrect}</b>
               <span style={{color:"#a9705a"}}>Third Tracks survived</span><b style={{color:"#ffb347"}}>{v.statsTrolleyThird}</b>
               <span style={{color:"#a9705a"}} title="est. $0.00 — the Fund awaits block one (§6.1)">Redirected to the Utilitarian Fund</span><b style={{color:"#ffb347"}}>{fmtBB(v.statsTrolleyFund)} BB</b>
+              {/* #44 SkinChain™ StatTrak (spec §5): chain checks */}
+              <span style={{color:"#a9705a"}} title="explorers are a courtesy; the chain is a courtesy; courtesy is pending (§6.1)">Chain checks (SkinChain™)</span><b style={{color:"#ffb347"}}>{v.statsChainChecks} (it did not move)</b>
               <span style={{color:"#a9705a"}} title="Streaks measure engagement, not enjoyment (§8.9).">Longest streak (unbeaten, like the house)</span><b style={{color:"#ffb347"}}>{v.attendLongest} days</b>
             </div>
           </div>
@@ -2720,6 +2759,8 @@ class App extends React.Component {
                         ) : (
                           <div style={{fontSize:"11px",color:"#e8c9ac"}}>
                             <div>Withdrawal request received. Status: Pending (ToS §1.3). Estimated processing: eventually.</div>
+                            {/* #44: the withdrawal attempt's chain receipt (usdEst $0.00 → 0 BB, chain-native) */}
+                            <div style={{marginTop:"4px"}}><SkinChainLink onOpen={()=>v.openSkinchainTx(v.rouletteJackpotBox.wdId, "Jackpot cash-out ("+v.rouletteJackpotBox.item.name+")", 0)} /></div>
                             <div style={{fontSize:"8px",color:"#8a6a52",fontStyle:"italic",marginTop:"4px"}}>{REALITY_STRAP}</div>
                           </div>
                         )}
@@ -3004,7 +3045,7 @@ class App extends React.Component {
                 )}
 
                 {v.isTrolley && (
-                  <TrolleyPanel balanceBB={v.trolleyBalanceBB} />
+                  <TrolleyPanel balanceBB={v.trolleyBalanceBB} openSkinchainContract={v.openSkinchainContract} />
                 )}
 
               </div>
@@ -3225,6 +3266,8 @@ class App extends React.Component {
               {v.mkListings.filter(l=>l.phase==="sold").slice(0,3).map(l=>(
                 <div key={l.id} style={{background:"#1a2a05",border:"1px solid #8fd97a",borderRadius:"6px",padding:"10px 12px",marginBottom:"8px",fontSize:"10.5px",color:"#c9f2b0"}}>
                   <b style={{color:"#8fd97a"}}>SOLD! {l.name}</b> — asking {l.askingBB} BB − Buyer Protection 7.3% ({l.buyerProtection} BB) − Settlement Fee ({l.settlementFee} BB) − §8.9 rounding = <b>{l.proceeds} BB credited to Escrow (converts to withdrawal queue)</b>{l.lowballAccepted ? " (accepted the lowball instead — bold)" : ""}
+                  {/* #44: the sold settlement receipt's chain link */}
+                  <div style={{marginTop:"4px"}}><SkinChainLink onOpen={()=>v.openSkinchainTx(l.id, "Marketplace settlement: "+l.name, l.proceeds)} /></div>
                 </div>
               ))}
               <div style={{height:"10px"}}></div>
@@ -3245,6 +3288,8 @@ class App extends React.Component {
                         <span style={{whiteSpace:"nowrap"}}>{escrowProgress(c.createdAt).toFixed(1)}%</span>
                         <span style={{textAlign:"right"}}>{escrowReason(c.createdAt)}</span>
                       </div>
+                      {/* #44: every escrow card explores (the canonical entry; the tx hash derives from the card's stable id) */}
+                      <div style={{marginTop:"6px"}}><SkinChainLink onOpen={()=>v.openSkinchainTx(c.id, c.label, c.bb)} /></div>
                       {v.appealState.id===c.id ? (
                         <div style={{marginTop:"8px",background:"#160a04",border:"1px dashed #ff9ad5",borderRadius:"6px",padding:"8px 10px",fontSize:"10.5px"}}>
                           <div style={{color:"#ff9ad5",fontWeight:800,marginBottom:"4px"}}>SupportBot (MOM-TRUSTED™)</div>
@@ -3348,7 +3393,10 @@ class App extends React.Component {
                 <div style={{fontSize:"10.5px",color:"#8a6a52",fontStyle:"italic"}}>Nothing sold yet. Instant Sell™ awaits (§5).</div>
               ) : (
                 v.soldLedger.map(s=>(
-                  <div key={s.id} style={{fontSize:"10px",color:"#a9705a",marginBottom:"4px",lineHeight:1.4}}>{s.line}</div>
+                  <div key={s.id} style={{fontSize:"10px",color:"#a9705a",marginBottom:"4px",lineHeight:1.4}}>
+                    {s.line} {/* #44: the instant-sold settlement receipt's chain link */}
+                    <SkinChainLink onOpen={()=>v.openSkinchainTx(s.id, "Instant Sell™: "+s.name, s.offerBB)} style={{marginLeft:"6px"}} />
+                  </div>
                 ))
               )}
 
@@ -3388,7 +3436,11 @@ class App extends React.Component {
                   </div>
                 )}
                 {e.itemClass==="receipt" && (
-                  <div style={{fontSize:"10.5px",color:"#e0a800",fontStyle:"italic",lineHeight:1.5,marginBottom:"10px"}}>Estimated value $0.00. {RECEIPT_FLAVOR}</div>
+                  <div style={{fontSize:"10.5px",color:"#e0a800",fontStyle:"italic",lineHeight:1.5,marginBottom:"10px"}}>
+                    Estimated value $0.00. {RECEIPT_FLAVOR}
+                    {/* #44: the rollback receipt's chain link (value: 0 BB, chain-native — the estimate is the joke) */}
+                    <div style={{marginTop:"4px"}}><SkinChainLink onOpen={()=>v.openSkinchainTx(e.id, "Market Event Receipt: "+(e.receiptFor||e.name), 0)} /></div>
+                  </div>
                 )}
                 {e.itemClass==="digital-asset" && (
                   <div style={{fontSize:"10.5px",color:"#4aa8c9",fontStyle:"italic",marginBottom:"10px"}}>Estimated value: {DIGITAL_ASSET_VALUE}. Non-sellable, non-listable, non-contractible.</div>
@@ -3471,6 +3523,18 @@ class App extends React.Component {
             </div>
           );
         })()}
+
+        {/* #44 SkinChain™ explorer — one modal at a time (single state slot),
+            dismissable, interruptible (no provider entry). Never renders during
+            MOM'S HOME: gated here AND cleared on activation (§3). */}
+        {v.skinchainView && !v.panicActive && (
+          <SkinChainModal
+            view={v.skinchainView}
+            onClose={v.closeSkinchain}
+            toast={(t,o)=>this.toast(t,o)}
+            realityStrap={REALITY_STRAP}
+          />
+        )}
 
         {/* ---- MOM'S HOME (#28): the Homework disguise (§2) — the underlying site
             gets fully replaced, not blurred; z 600 covers every overlay incl. the

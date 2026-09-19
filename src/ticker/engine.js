@@ -76,6 +76,11 @@ export const JUNK_TEMPLATES = [
   // conductor's reasoning is available in card form.
   "{n}'s appeal was analyzed (denied (§4.1))",
   "the conductor's reasoning trace is available on request (requests are mood-dependent)",
+  // #44 SkinChain™ (spec §4 — ambient pool additions, verbatim): the chain is
+  // viewable, the viewing is pending, and the mempool respects no one.
+  "{n} viewed their transaction on SkinChain™ (it was still there (pending))",
+  "block 1 remains mood-dependent (day 847)",
+  "{n} tipped 847 Grief (gratitude generated; position unchanged)",
 ];
 
 // House/cast lines (§2 tier 8%). Cast entries render with badge + cast color.

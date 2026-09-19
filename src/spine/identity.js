@@ -50,6 +50,10 @@ const MILESTONES = {
   // once-per-identity trigger list — "{tag} has received 25 AI analyses (all
   // conclusive (est.))".
   aiAnalyses: [25],
+  // #44 SkinChain™ (skinchain §5; integration-2026 §10.6): the leak joins the
+  // same once-per-identity trigger list — "{tag} has checked the chain 50
+  // times (it did not move)".
+  chainChecks: [50],
 };
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -166,6 +170,11 @@ function blankStats() {
     // Advice™ press (card or one-liner) counts; the milestone leak at 25 rides
     // MILESTONES + chat's once-per-identity flags.
     aiAnalyses: 0,
+    // #44 SkinChain™ (integration-2026 §10.6): chain checks — one per explorer
+    // open (App bumps on open; hfes_skinchain carries the theater's own
+    // views/tips/verifies counters); the milestone leak at 50 rides MILESTONES
+    // + chat's once-per-identity flags.
+    chainChecks: 0,
   };
 }
 function sanitizeStats(v) {
@@ -195,6 +204,7 @@ function sanitizeStats(v) {
   base.trolleyThirdTracks = Math.floor(num(v.trolleyThirdTracks));
   base.trolleyFundBB = r2(num(v.trolleyFundBB));
   base.aiAnalyses = Math.floor(num(v.aiAnalyses)); // #43
+  base.chainChecks = Math.floor(num(v.chainChecks)); // #44
   return base;
 }
 function loadKey(key, sanitize) {

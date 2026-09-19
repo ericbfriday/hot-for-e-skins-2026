@@ -7,6 +7,10 @@ import * as E from "./engine.js";
 // src/ai/ (integration-2026 §1); her deliberation copy stays in this venue.
 import ModelCardModal from "../ai/ModelCardModal.jsx";
 import { MODEL_CARD_BUTTON, MODEL_CARD_TRACE_LINK } from "../ai/ModelCard.js";
+// #44 SkinChain™ (skinchain §1.4): the Fund panel links to the Fund's
+// "contract" on the explorer — not a tx (the contract view renders the
+// read-only buttons that all return pending()).
+import { SkinChainLink } from "../skinchain/SkinChainModal.jsx";
 
 const PHASE_LABELS = { title: "TITLE CARD", stakes: "STAKES REVEAL", betting: "BETTING WINDOW", deliberation: "DELIBERATION", verdict: "VERDICT" };
 
@@ -194,6 +198,10 @@ class TrolleyPanelBase extends React.Component {
           <div style={{ background: "#0e0a06", border: "1px solid #7a5a2a", borderRadius: "6px", padding: "8px 12px", marginBottom: "12px", display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: "6px" }}>
             <div style={{ fontSize: "10.5px", fontWeight: 800, color: "#ffd54a", letterSpacing: "0.5px" }}>{E.COPY.fundLabel} <span style={{ fontSize: "8.5px", color: "#8a6a52" }}>({E.COPY.fundEst})</span></div>
             <div style={{ fontSize: "10px", color: "#e8a52a" }}>{snap.fundBB} BB of everyone's best intentions</div>
+            {/* #44: the Fund's contract, on-chain (pending (§6.1)) */}
+            {this.props.openSkinchainContract && (
+              <SkinChainLink onOpen={this.props.openSkinchainContract} style={{ fontSize: "8.5px", flexBasis: "100%" }} />
+            )}
           </div>
           {/* On-demand: the AI is always in (§2) */}
           <button onClick={() => TrolleyCtl.requestDilemma()} style={{ background: "linear-gradient(180deg,#ff8a3d,#e0480a)", border: "2px solid #ffcf9a", color: "#2a0e05", fontWeight: 900, fontSize: "13px", padding: "11px 18px", borderRadius: "8px", cursor: "pointer", animation: "pulseGlow 1.6s infinite" }}>
