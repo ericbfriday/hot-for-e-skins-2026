@@ -23,7 +23,7 @@ import {
   GRATUITY_LINE, GRATUITY_WAIVED_LINE, FLOOD_LINE_TEMPLATE, FLOOD_FINE_PRINT, COOLDOWN_CLICK_LINE,
   WHISPER_NOT_REPLYABLE_LINE, MOM_WHISPER_DECK, TIMEOUT_REASONS, TIMEOUT_DURATION_MS,
   TIMEOUT_AMBIENT_LINES, REDACTION_LINE, WIN_DELETE_LINE, WIN_BREATHE_LINES, MINOR_ESCALATION,
-  RAIN_INELIGIBLE_LINE, RAIN_KEYWORD_LINE, ONLINE_TOOLTIP, TROLLEY_WINDOW_LINES,
+  RAIN_INELIGIBLE_LINE, RAIN_KEYWORD_LINE, ONLINE_TOOLTIP, TROLLEY_WINDOW_LINES, SKINCHAIN_CHAT_LINES,
 } from "./constants.js";
 import {
   loadFlags, markFlag, hasFlag, loadCooldownLevel, bumpCooldownLevel, cooldownSecondsForLevel,
@@ -130,6 +130,14 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
       const deck = MOOD_CHATTER[Mood.word()] || [];
       if (deck.length) { pushAmbientLine(deck[Math.floor(Math.random() * deck.length)]); return; }
     }
+    // #44 SkinChain™ (skinchain §4): the chain's chat lines at low cadence —
+    // the room waits for block one; DEPOSITOR.ai renders via the reserved cast.
+    if (Math.random() < 0.05) {
+      const line = SKINCHAIN_CHAT_LINES[Math.floor(Math.random() * SKINCHAIN_CHAT_LINES.length)];
+      if (line.cast) { pushCast(line.cast, line.msg); return; }
+      pushEntry({ user: line.user, color: line.color, msg: line.msg });
+      return;
+    }
     const archetype = pickArchetype();
     if (archetype.isWhale) {
       const line = WHALE_LINES[Math.floor(Math.random() * WHALE_LINES.length)];
@@ -138,7 +146,7 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     }
     const line = pickLine(archetype);
     if (line) pushAmbientLine(line, archetype);
-  }, [pushAmbientLine, pushEntry]);
+  }, [pushAmbientLine, pushCast, pushEntry]);
 
   const scheduleAmbient = useCallback(() => {
     const now = Date.now();
@@ -541,6 +549,10 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
         // #43 (ai-layer §9): the AI milestone leak joins the once-per-identity
         // trigger list (hfes_chat_flags, identity canon extended additively).
         addTimer(() => pushAmbientLine(tag + " has received 25 AI analyses (all conclusive (est.))"), 500);
+      } else if (p.field === "chainChecks" && p.value === 50 && markFlag("milestone:" + key)) {
+        // #44 (skinchain §5): the chain-checks leak, same once-per-identity
+        // list — verbatim (it did not move).
+        addTimer(() => pushAmbientLine(tag + " has checked the chain 50 times (it did not move)"), 500);
       }
     }));
 

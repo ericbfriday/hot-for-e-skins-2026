@@ -138,6 +138,16 @@ export const TROLLEY_WINDOW_LINES = [
   { user: "MOD_Chad_Official", color: "#8fd97a", badge: "[MOD]", msg: "the AI has never been wrong (verification pending)" },
 ];
 
+// #44 SkinChain™ (spec §4 — the chain's chat lines, verbatim): drawn from the
+// ambient cadence at a low rate. The DEPOSITOR.ai line renders via the
+// reserved cast (her [AI] badge + lab-coat blue, #43's plumbing); MOD likewise.
+// gasgrief_ooo is a surface-owned named persona (one line, worn forever).
+export const SKINCHAIN_CHAT_LINES = [
+  { user: "gasgrief_ooo", color: "#a9705a", msg: "i've been 848 of 848 for an hour. she's contemplative" },
+  { cast: "DEPOSITOR.ai", msg: "Analysis: the chain is pending (§6.1). Pending is a stable state. Your patience is compounding (est.)." },
+  { cast: "MOD_Chad_Official", msg: "the chain is SO close to block 1 guys!! (day 847)" },
+];
+
 export const DEFAULT_NONRESPONSE = {
   who_asked: "who asked",
   win_misread: "W",
