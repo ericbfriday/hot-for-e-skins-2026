@@ -24,7 +24,7 @@ import {
   WHISPER_NOT_REPLYABLE_LINE, MOM_WHISPER_DECK, TIMEOUT_REASONS, TIMEOUT_DURATION_MS,
   TIMEOUT_AMBIENT_LINES, REDACTION_LINE, WIN_DELETE_LINE, WIN_BREATHE_LINES, MINOR_ESCALATION,
   RAIN_INELIGIBLE_LINE, RAIN_KEYWORD_LINE, ONLINE_TOOLTIP, TROLLEY_WINDOW_LINES, SKINCHAIN_CHAT_LINES,
-  FOUNDRY_CHAT_LINES,
+  FOUNDRY_CHAT_LINES, PASS_CHAT_LINES,
 } from "./constants.js";
 import {
   loadFlags, markFlag, hasFlag, loadCooldownLevel, bumpCooldownLevel, cooldownSecondsForLevel,
@@ -143,6 +143,14 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     // the room reacts to the renders; DEPOSITOR.ai analyzes the originals (est.).
     if (Math.random() < 0.04) {
       const line = FOUNDRY_CHAT_LINES[Math.floor(Math.random() * FOUNDRY_CHAT_LINES.length)];
+      if (line.cast) { pushCast(line.cast, line.msg); return; }
+      pushEntry({ user: line.user, color: line.color, msg: line.msg });
+      return;
+    }
+    // #46 the Pass (battle-pass §7): the ladder's ambient takes at low cadence —
+    // the analysis closes the mob; the whale is already paved.
+    if (Math.random() < 0.03) {
+      const line = PASS_CHAT_LINES[Math.floor(Math.random() * PASS_CHAT_LINES.length)];
       if (line.cast) { pushCast(line.cast, line.msg); return; }
       pushEntry({ user: line.user, color: line.color, msg: line.msg });
       return;
@@ -617,6 +625,14 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
     offs.push(Bus.on(EVENTS.MIKE_WIN, (p) => {
       if (!p || p.class !== "house-sat") return;
       if (Math.random() < 0.4) addTimer(() => pushAmbientLine(playerTag() + "'s on a heater (someone is)"), 500);
+    }));
+
+    // #46 the Pass (integration-2026 §2; battle-pass §7): the MOD congratulation
+    // on every tier-up, verbatim — every loss counted (they really counted).
+    offs.push(Bus.on(EVENTS.PASS_MILESTONE, (p) => {
+      if (!p || !p.tier) return;
+      const tag = playerTag();
+      addTimer(() => pushCast("MOD_Chad_Official", tag + " hit " + p.tier + " MOM!! every loss counted!! (they really counted)"), 900);
     }));
 
     // #31 retention: VIP Host Mom's DMs are whispers (MOM never speaks in public

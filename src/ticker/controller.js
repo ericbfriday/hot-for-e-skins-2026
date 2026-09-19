@@ -422,3 +422,14 @@ Bus.on(EVENTS.LIMIT_EVENT, (p) => {
     graceLine();
   }
 });
+
+// #46 Mom's Little Helper™ Pass (integration-2026 §2): tier-ups land the spec
+// §7 line, player-bound — every loss counted (they really counted).
+Bus.on(EVENTS.PASS_MILESTONE, (p) => {
+  if (!p || !p.tier) return;
+  notePlayerEvent();
+  Ticker.emitTicker({
+    text: playerTag() + " reached " + p.tier + " MOM (the queue position is 847 of 847 (priority confirmed))",
+    isYou: true,
+  });
+});

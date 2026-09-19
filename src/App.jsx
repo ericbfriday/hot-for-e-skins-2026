@@ -85,6 +85,11 @@ import { APPEAL_TOAST } from "./ai/decks.js";
 import SkinChainModal, { SkinChainLink } from "./skinchain/SkinChainModal.jsx";
 import { txViewFor, contractViewFor } from "./skinchain/explorer.js";
 import { SkinChain } from "./skinchain/state.js";
+// #46 Mom's Little Helper™ Pass (battle-pass.md; integration-2026 §1/§2):
+// state + bus-consumer quest engine in src/pass/, panel here. Every loss is
+// progress; the pass consumes bus events + spine counters only (spine rule).
+import PassPanel from "./pass/PassPanel.jsx";
+import { Pass } from "./pass/state.js";
 
 const SKIN_IMAGES = Object.fromEntries(
   Object.entries(import.meta.glob("./assets/skins/*.jpg", { eager: true })).map(([path, mod]) => [
@@ -286,6 +291,10 @@ class App extends React.Component {
     // #44 SkinChain™ — the open explorer view (tx or Fund contract); one modal
     // at a time by construction (a single state slot). null = closed.
     skinchainView:null,
+
+    // #46 the Pass — the live panel snapshot (Pass.subscribe drives it) + the
+    // session's redeemed free spins (a redeemed Mom Coupon™ is 1 FREE SPIN).
+    passSnap:null, couponFreeSpins:0,
 
     // Self-Limit Settings (#29) — the control room connected to nothing
     selflimitOpen:false, slLadder:0, slRefuseTip:false, slAskMomPending:null,
@@ -496,6 +505,12 @@ class App extends React.Component {
     // deterministic daily seed, ≥ 3 Market-Grade holdings, > 24h since the last
     // one, 10% — spec §9's cadence rules).
     Market.init();
+    // #46 the Pass: init subscribes at mount — AFTER the spine's module-level
+    // round.settled listener — so the XP toast lands after the Consolation-Key
+    // envelope check (integration-2026 §6 sequencing, by subscription order).
+    Pass.init({ toast: (t, o) => this.toast(t, o) });
+    this._offPass = Pass.subscribe((snap) => this.setState({ passSnap: snap }));
+    this.setState({ passSnap: Pass.get() });
     const rollback = Market.maybeRollback();
     if (rollback) this.toast("Scheduled maintenance: 1 (one) item was never yours. A Market Event Receipt was left in its place ($0.00, Instant Sell™: 1 BB).");
     this._prevTrending = featuredItems(balance).map((f) => f.id);
@@ -646,6 +661,7 @@ class App extends React.Component {
     if (this._offMilestone) this._offMilestone();
     if (this._offInventory) this._offInventory();
     if (this._offBandSettled) this._offBandSettled();
+    if (this._offPass) this._offPass(); // #46: the pass snapshot feed
     if (this._activity) {
       window.removeEventListener("pointerdown", this._activity);
       window.removeEventListener("keydown", this._activity);
@@ -1013,12 +1029,16 @@ class App extends React.Component {
 
   playRoulette(){
     if (this.state.rouletteSpinning) return;
-    const turbo = this.state.rouletteTurboUnlocked && this.state.rouletteTurbo;
-    const insured = this.state.rouletteInsured;
-    const price = Roulette.SPIN_PRICE_BB + (turbo?Roulette.TURBO_FEE_BB:0) + (insured?Roulette.INSURANCE_FEE_BB:0);
-    if (!this.payBB(price, "roulette")) return;
+    // #46: a redeemed Mom Coupon™ is 1 FREE SPIN — a free round: no BB, no
+    // streak, no vault, no XP ("free rounds move nothing but feelings").
+    const free = this.state.couponFreeSpins > 0;
+    const turbo = !free && this.state.rouletteTurboUnlocked && this.state.rouletteTurbo;
+    const insured = !free && this.state.rouletteInsured;
+    const price = free ? 0 : Roulette.SPIN_PRICE_BB + (turbo?Roulette.TURBO_FEE_BB:0) + (insured?Roulette.INSURANCE_FEE_BB:0);
+    if (!free && !this.payBB(price, "roulette")) return;
+    if (free) this.setState(s=>({couponFreeSpins:s.couponFreeSpins-1}));
     const roundId = this.nextRoundId();
-    Bus.emit(EVENTS.ROUND_STARTED, {surface:"roulette", roundId, priceBB:price, wagered:true});
+    Bus.emit(EVENTS.ROUND_STARTED, {surface:"roulette", roundId, priceBB:price, wagered:!free});
     HouseBand.play("roulette.spin", {priority:BAND_PRIORITIES.P2_GAME});
     const duration = turbo ? 2500 : 5000;
     const finalOffset = -(2800 + Math.floor(Math.random()*300));
@@ -1026,9 +1046,9 @@ class App extends React.Component {
     requestAnimationFrame(()=>{
       this.setState({rouletteOffset:finalOffset, rouletteTransition:`transform ${duration}ms cubic-bezier(0.12,0.7,0.25,1)`});
     });
-    this._rouletteSpinTimer = setTimeout(()=>this.resolveRouletteSpin(roundId, price, turbo, insured), duration + 300);
+    this._rouletteSpinTimer = setTimeout(()=>this.resolveRouletteSpin(roundId, price, turbo, insured, free), duration + 300);
   }
-  resolveRouletteSpin(roundId, price, turbo, insured){
+  resolveRouletteSpin(roundId, price, turbo, insured, free){
     const welcome = !this._rouletteWelcomeUsed;
     this._rouletteWelcomeUsed = true;
     const kind = welcome ? "junk-win" : Roulette.rollOutcome();
@@ -1049,7 +1069,7 @@ class App extends React.Component {
         ? "Everyone wins their first one. It's in the brochure."
         : "JUNK WIN: "+item.name+" (est. "+item.value+") is yours. Withdrawal pending.";
     } else if (kind === "nibble") {
-      netBB = -(price - 2);
+      netBB = free ? 0 : -(price - 2); // a free nibble nibbles nothing (§2)
       resultText = "Refund nibble: 2 BB Rakeback credited. Net: still down.";
     } else if (kind === "jackpot") {
       item = Roulette.pickJackpotItem(this._rouletteLastNearMissId);
@@ -1066,7 +1086,8 @@ class App extends React.Component {
     let consolation = null;
     if (kind === "junk-win" || kind === "jackpot") {
       streak = 0; // fake win resets the ladder ("counts as a win for morale purposes only")
-    } else {
+    } else if (!free) {
+      // free rounds move no ladder (the coupon spin is a feeling, not a round)
       streak += 1;
       consolation = Roulette.consolationForStreak(streak, this.state.moodWord);
     }
@@ -1090,8 +1111,8 @@ class App extends React.Component {
       rouletteBannerNames: itemAward && !s.rouletteBannerNames.includes(tag) ? [tag, ...s.rouletteBannerNames].slice(0,7) : s.rouletteBannerNames,
     }));
 
-    this.settleRound("roulette", roundId, kind, {priceBB:price, netBB, itemAward, nearMissItem, surfaceStreak:streak});
-    this._rouletteVaultLine = Vault.receiptLine(0.1); // this spin's accrual, snapshotted
+    this.settleRound("roulette", roundId, kind, {priceBB:price, netBB, itemAward, nearMissItem, surfaceStreak:streak, wagered:!free});
+    this._rouletteVaultLine = free ? null : Vault.receiptLine(0.1); // this spin's accrual, snapshotted (free spins feed nothing)
     if (consolation) {
       if (consolation.kind === "badge") this.pushTicker(tag+" earned the Consistent! badge (losses: 7)");
       if (consolation.kind === "apology") this.pushTicker(tag+" received a formal apology (fee: 1 BB)");
@@ -1858,6 +1879,11 @@ class App extends React.Component {
       const res = Market.tradeUpOutcome(sel);
       this.setState({ contractPhase:"done", contractResult:res, contractSel:[] });
       if (res.ok) {
+        // #46 additive signal: Trade-Up completion rides market.event as a
+        // sixth kind, "trade-up" (the original five kinds stand; the ticker's
+        // MARKET_EVENT consumer ignores unknown kinds). The pass's seasonal
+        // quest hears it here — smallest emitter at the owning surface.
+        Bus.emit(EVENTS.MARKET_EVENT, { kind: "trade-up", item: res.name });
         // #45: dreamed contracts fulfill with a dream — no float, no StatTrak,
         // just the cheapest dream of the next tier and its $0.00 forever.
         this.toast(res.kind === "photograph" ? res.note
@@ -2217,6 +2243,45 @@ class App extends React.Component {
   maybeApplyMemorialDebt(){
     if (Retention.memorialOwed()) this.applyMemorialRename();
   }
+
+  // ---- #46 Mom's Little Helper™ Pass ------------------------------------------
+  // Premium: 250 OC, once — the custom-name price (the house has one price for
+  // identity-flavored vanity). App owns the OC spend path (buyCustom's); the
+  // pass marks its own ledger and discloses with unusual candor.
+  buyPassPremium(){
+    if ((this.state.passSnap || Pass.get()).premium) return;
+    if (this.state.balanceOC < Pass.PREMIUM_PRICE_OC) {
+      // insufficient OC routes toward Ask-Mom per the house idiom (§1.3)
+      this.openAskMom({source:"pass-premium"});
+      this.toast("The premium track costs "+Pass.PREMIUM_PRICE_OC+" OC. Mom has been notified of your ambitions (§3.1).");
+      return;
+    }
+    const ocLeft = this.state.balanceOC - Pass.PREMIUM_PRICE_OC;
+    this.setState({balanceOC:ocLeft});
+    saveOC(ocLeft);
+    Pass.buyPremium();
+    this.toast("Premium track unlocked — thank you for your support (of nothing in particular (§2.1)).");
+    this.pushTicker(this.playerTagOrYou()+" unlocked the premium track (the shininess is estimated (est.))");
+  }
+  // #46 (battle-pass §4): the Mom Coupon™ redemption surface — the coupon was
+  // always "redeemable only when the mood is Generous"; now the button exists.
+  // Generous day: the coupon consumes into 1 FREE SPIN (a free round — no
+  // streak, no vault, no XP) + the minted coupon.redeemed event; any other
+  // mood: refused, decoratively.
+  redeemMomCoupon(uid){
+    const entry = Inventory.find(uid);
+    if (!entry || entry.name !== "Mom Coupon™") return;
+    const word = Mood.word();
+    if (word !== "Generous") {
+      this.toast("The Mom Coupon™ is redeemable only when the mood is Generous (today: "+word+"). It remains decorative (§8.9).");
+      return;
+    }
+    Inventory.remove(uid);
+    this.setState(s=>({couponFreeSpins:(s.couponFreeSpins||0)+1, invDetailId:null}));
+    Bus.emit(EVENTS.COUPON_REDEEMED, {mood: word});
+    this.toast("Mom Coupon™ redeemed: 1 FREE SPIN (the mood is Generous (est.)). The spin moves nothing but feelings (§2).");
+    this.pushTicker(this.playerTagOrYou()+" redeemed a Mom Coupon™ (mood: Generous)");
+  }
   onVaultChange(v){
     const prev = this._vaultRecal || 0;
     this._vaultRecal = v.recalibrations;
@@ -2242,7 +2307,7 @@ class App extends React.Component {
     const s = this.state;
     const bb = s.balanceBB;
     const vg = bb*V_GEMS_PER_BB, sc = bb*SKINCOINZ_PER_BB;
-    const tabs = ["roulette","coinflip","crash","crates","trolley"];
+    const tabs = ["roulette","coinflip","crash","crates","trolley","pass"];
     const tabBg = {}, tabColor = {};
     tabs.forEach(t=>{ const on = s.activeTab===t; tabBg[t]= on ? "linear-gradient(160deg,#3a1206,#2a0d05)" : "#1a0d05"; tabColor[t]= on ? "#ffb347" : "#a9705a"; });
     const catalog = CATALOG.map(it=>({...it, rarityColor: RARITY_COLORS[it.rarity]||"#ff8a3d"}));
@@ -2360,9 +2425,15 @@ class App extends React.Component {
       activeTab:s.activeTab, tabBg, tabColor,
       isRoulette: s.activeTab==="roulette", isCoinflip: s.activeTab==="coinflip", isCrash: s.activeTab==="crash", isCrates: s.activeTab==="crates",
       isTrolley: s.activeTab==="trolley", trolleyBalanceBB: bb,
+      // #46 the Pass tab: the LABEL carries a live micro progress bar (a few
+      // honest px toward the next Mom) — the header chip is frozen out.
+      isPass: s.activeTab==="pass", passSnap: s.passSnap,
+      buyPassPremium:()=>this.buyPassPremium(),
+      couponRedeem:(uid)=>this.redeemMomCoupon(uid), moodWordNow: s.moodWord || Mood.word(),
       setTab_roulette:()=>this.setTab("roulette"), setTab_coinflip:()=>this.setTab("coinflip"),
       setTab_crash:()=>this.setTab("crash"), setTab_crates:()=>this.setTab("crates"),
       setTab_trolley:()=>this.setTab("trolley"),
+      setTab_pass:()=>this.setTab("pass"),
       rouletteStrip:ROULETTE_STRIP, rouletteOffset:s.rouletteOffset, rouletteTransition:s.rouletteTransition,
       rouletteSpinning:s.rouletteSpinning, rouletteResult:s.rouletteResult, playRoulette:()=>this.playRoulette(),
       // #43 AI Advice™ (ai-layer §4): every press renders an analysis (card or
@@ -2370,8 +2441,10 @@ class App extends React.Component {
       // the advice (the worse choice — the surface's own action).
       aiAnalysisNote:()=>this.noteAiAnalysis(),
       playCoinflipAgain:()=>this.playCoinflip(),
-      rouletteSpinPrice: Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0),
-      rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : ("SPIN AGAIN — "+(Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0))+" BB"),
+      rouletteSpinPrice: s.couponFreeSpins > 0 ? 0 : Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0),
+      rouletteBtnLabel: s.rouletteSpinning ? "Spinning..." : (s.couponFreeSpins > 0
+        ? "SPIN — FREE (MOM COUPON™)" + (s.couponFreeSpins > 1 ? " ×"+s.couponFreeSpins : "")
+        : "SPIN AGAIN — "+(Roulette.SPIN_PRICE_BB + (s.rouletteTurboUnlocked && s.rouletteTurbo ? Roulette.TURBO_FEE_BB : 0) + (s.rouletteInsured ? Roulette.INSURANCE_FEE_BB : 0))+" BB"),
       rouletteSpinsLeft: Math.floor(bb / Roulette.SPIN_PRICE_BB),
       rouletteInsured:s.rouletteInsured, toggleRouletteInsured:()=>this.toggleRouletteInsured(),
       rouletteTurboUnlocked:s.rouletteTurboUnlocked, rouletteTurbo:s.rouletteTurbo, toggleRouletteTurbo:()=>this.toggleRouletteTurbo(),
@@ -2917,6 +2990,15 @@ class App extends React.Component {
                 <button onClick={v.setTab_crash} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.crash,color:v.tabColor.crash,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>College Fund Crash</button>
                 <button onClick={v.setTab_crates} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.crates,color:v.tabColor.crates,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>Loot Crate Defuser</button>
                 <button onClick={v.setTab_trolley} style={{padding:"10px 18px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.trolley,color:v.tabColor.trolley,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer"}}>MORAL EXPRESS 🚋</button>
+                {/* #46: the PASS tab — the label carries the live micro progress
+                    bar (a few honest px toward the next Mom); no header chip
+                    (the header composition is frozen, integration §12.7). */}
+                <button onClick={v.setTab_pass} title={v.passSnap ? (v.passSnap.xp+" XP — "+v.passSnap.tierLabel) : "the pass is eternal"} style={{padding:"8px 18px 6px",borderRadius:"7px 7px 0 0",border:"2px solid #ff5a14",borderBottom:"none",background:v.tabBg.pass,color:v.tabColor.pass,fontFamily:"'Bangers',cursive",fontSize:"15px",letterSpacing:"0.5px",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px"}}>
+                  <span>PASS 🎖</span>
+                  <span style={{display:"block",width:"86px",height:"3px",borderRadius:"2px",background:"#160a04",overflow:"hidden"}}>
+                    <span style={{display:"block",height:"100%",width:(v.passSnap ? v.passSnap.tierPct : 0)+"%",background:"linear-gradient(90deg,#7a3a1a,#ff8a3d,#ffd54a)",transition:"width 0.5s"}}></span>
+                  </span>
+                </button>
               </div>
 
               {/* #42: the live mini-bar rides every other tab while a dilemma is
@@ -3020,7 +3102,7 @@ class App extends React.Component {
                         <input type="checkbox" checked={v.rouletteTurbo} disabled={!v.rouletteTurboUnlocked} onChange={v.toggleRouletteTurbo} /> {v.rouletteTurboUnlocked ? "Turbo Spin™ (+2 BB, 2.5s)" : "Turbo Spin (premium) — Ask Mom to unlock"}
                       </label>
                     </div>
-                    <button onClick={v.playRoulette} disabled={v.rouletteSpinning} style={{marginTop:"16px",background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.rouletteSpinning ? "Spinning..." : ("SPIN — "+v.rouletteSpinPrice+" BB")}</button>
+                    <button onClick={v.playRoulette} disabled={v.rouletteSpinning} style={{marginTop:"16px",background:"linear-gradient(180deg,#ff8a3d,#e0480a)",border:"2px solid #ffcf9a",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 22px",borderRadius:"8px",cursor:"pointer"}}>{v.rouletteBtnLabel}</button>
                     <div style={{fontSize:"9px",color:"#7a5a4a",marginTop:"4px"}}>(that's ${(v.rouletteSpinPrice*0.3125).toFixed(2)} in old money)</div>
                     {/* #43 AI Advice™ — roulette pre-spin (spec §4's verbatim card) */}
                     <div style={{marginTop:"8px"}}><AdviceChip surface="roulette" onAnalysis={v.aiAnalysisNote} onRecommend={v.playRoulette} /></div>
@@ -3427,6 +3509,19 @@ class App extends React.Component {
 
                 {v.isTrolley && (
                   <TrolleyPanel balanceBB={v.trolleyBalanceBB} openSkinchainContract={v.openSkinchainContract} />
+                )}
+
+                {/* #46: the Pass panel — money-adjacent (premium costs OC), so the
+                    §12.4 strap renders pinned inside it; the countdown is lunar. */}
+                {v.isPass && v.passSnap && (
+                  <PassPanel
+                    snap={v.passSnap}
+                    ocCount={v.ocCount}
+                    premiumPrice={Pass.PREMIUM_PRICE_OC}
+                    buyPremium={v.buyPassPremium}
+                    openAskMom={()=>this.openAskMom({source:"pass-premium"})}
+                    realityStrap={REALITY_STRAP}
+                  />
                 )}
 
               </div>
@@ -3888,6 +3983,15 @@ class App extends React.Component {
                     : (e.provenance||[]).map((p,i)=>(<div key={i} style={{fontSize:"9.5px",color:"#a9705a",lineHeight:1.5}}>— {p}</div>))}
                 </div>
                 <div style={{display:"flex",gap:"8px",flexWrap:"wrap",alignItems:"center"}}>
+                  {/* #46: the Mom Coupon™ redemption surface — "redeemable only
+                      when the mood is Generous" finally has a button. */}
+                  {e.name === "Mom Coupon™" && (
+                    <button
+                      onClick={()=>v.couponRedeem(e.id)}
+                      title={"redeemable only when the mood is Generous (today: "+v.moodWordNow+")"}
+                      style={{background:"linear-gradient(180deg,#ff9ad5,#c95a9a)",border:"2px solid #ffd6ec",color:"#2a0e1a",fontWeight:900,fontSize:"11px",padding:"9px 12px",borderRadius:"7px",cursor:"pointer"}}
+                    >Redeem — 1 FREE SPIN (mood: {v.moodWordNow})</button>
+                  )}
                   {e.dreamed ? (
                     /* #45: the walls, rendered — Instant Sell™ and listing reject
                         dreamed assets politely; the buttons stay, dead, titled. */

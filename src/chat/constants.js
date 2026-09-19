@@ -158,6 +158,15 @@ export const FOUNDRY_CHAT_LINES = [
   { cast: "MOD_Chad_Official", msg: "AI skins are the future!! the future is pending!!" },
 ];
 
+// #46 Mom's Little Helper™ Pass (spec §7 — the pass's ambient chat lines,
+// verbatim): drawn from the ambient cadence at a low rate; the MOD
+// congratulation is event-driven (pass.milestone, the ChatPanel wiring) —
+// these are the room's ambient takes on the ladder that never ends.
+export const PASS_CHAT_LINES = [
+  { cast: "DEPOSITOR.ai", msg: "Analysis: your losses are converting at industry rate (100%). Keep going." },
+  { user: "Timmy_Second_Mortgage", color: "#e8c9ac", msg: "diamond mom by friday. the road is paved and so am i" },
+];
+
 export const DEFAULT_NONRESPONSE = {
   who_asked: "who asked",
   win_misread: "W",
