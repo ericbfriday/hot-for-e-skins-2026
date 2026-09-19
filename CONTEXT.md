@@ -141,3 +141,7 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **AI Advice™**: the free analysis available on every game surface — three hedged bullets and a glowing recommendation that is always the worse choice. The advice is free; following it is not.
 - **Memo**: DEPOSITOR.ai's private register — monospaced, clinical blue, pinned, never replyable. The whisper's lab-coated sibling: it never naggs, it notices. Forgiveness is mood-dependent.
 - **The two AIs agree**: UTILIMOM™ and DEPOSITOR.ai never converse on screen — disagreement would require weights. Their agreement is silent, and it is total.
+- **Dreamed Asset™**: an inventory award synthesized live by UTILIMOM™ — a deterministic SVG composition wearing a generated name, a prompt receipt, and the provenance "derivative of everything, provably". Originality estimated pending.
+- **The Undreamed™**: the Foundry's reel-only unwinnable — the one skin the AI cannot generate (it must be earned; it cannot be earned). The Karambit's dreamt rhyme.
+- **Prompt receipt**: every Dreamed Asset's proof of slop — the prompt it was dreamt from, verbatim, too fast to read at render time and too sad to reread after.
+- **REMIX**: the Foundry's duplicate protection theater — duplicates return palette-swapped and rebranded (Remix #{n}), still yours, technically new. Novelty: estimated.
