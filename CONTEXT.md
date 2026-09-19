@@ -128,3 +128,11 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **Interruptible moment**: the house's name for a moment a modal may interrupt you. Deposits, crates, the Terms, and the Homework disguise never qualify — which is most of the site.
 - **847**: the site's population constant — the chat's online baseline, the withdrawal queue's depth, the winners-today suffix. The crowd is always 847 big; one of them is you.
 - **Tone bible**: the house stylebook — who may say what, in which register, and which jokes are banned. The only document the personas fear.
+- **The Moral Express™**: the site's permanently-live broadcast, in which UTILIMOM™ deliberates real-time trolley dilemmas and the audience bets BB on the verdict. The broadcast began before you arrived and will continue after; 847 are always watching (one of them is you).
+- **UTILIMOM™**: the house's Ethical Outcome Engine — the AI that weighs every life, then weighs the payout. Weights pending, alignment pending, benchmarks: 847. She never thinks; she has weighed.
+- **Deliberation**: UTILIMOM™'s streamed reasoning — a token counter over a reenactment whose verdict was decided before the animation began (§4.2). The latency is the authenticity.
+- **The Third Track**: the trolley's house-private track, taken one schedule in seven — both sides lose, and every stake is redirected to the Utilitarian Fund. The third track was load-bearing.
+- **Utilitarian Fund**: where Third-Track stakes accrue — the house's vault of everyone's best intentions, estimated at $0.00 and pending forever (§6.1).
+- **Moral Gratuity**: the 12.5% levy on every winning trolley payout — customary, not required, automatically applied (the Maternal Gratuity's civic-minded sibling).
+- **Standing Conviction™**: the pre-checked auto-rebet that doubles your next stake on the same side after a loss. The house calls it faith; the checkbox calls it default.
+- **Payout Ceiling**: the generosity ceiling installed for your protection — no winning dilemma pays more than stake + 5 BB. The ceiling is load-bearing.
