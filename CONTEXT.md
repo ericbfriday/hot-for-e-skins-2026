@@ -148,3 +148,7 @@ Glossary for Hot For E-Skins 2026, a satirical skin-gambling parody. Nothing on 
 - **SkinChain™**: the house's chain — genesis 847 days ago, latest block 0, and everything you ever earned is on it, pending (§6.1). The explorer is a courtesy; courtesy is pending.
 - **Grief**: the SkinChain™'s native gas — unacquirable, unspendable, unholdable, and always 21,000 of it. Tipping it generates gratitude and nothing else.
 - **The mempool**: the SkinChain™'s waiting room — 847 pending transactions ahead of yours, reconfirming out of order while your position improves (est.) at position 848 of 848.
+- **Mom's Little Helper™ Pass**: the seasonal battle pass — 1 XP per BB lost, tiers BRONZE MOM through DIAMOND MOM, quests drawn from the house's real events. Mom's little helper is watching you improve (est.).
+- **Every loss is progress**: the pass's doctrine — wins teach nothing (0 XP); losses accrue like regret. The machine is sincere; the prizes are the house's.
+- **DIAMOND MOM**: the pass's terminal tier — non-transferable, non-refundable, est. priceless (est. $0.00). There is nothing after this (keep going).
+- **Season 1 of 1**: the pass's season — ends in 29d 23h forever (lunar recalibration, §8.9), with no Season 2 (Season 2 is mood-dependent). The FOMO is purely architectural.
