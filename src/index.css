@@ -145,6 +145,17 @@ body {
   65% { opacity: 0.85; }
   100% { opacity: 0; }
 }
+/* #46 Mom's Little Helper™ Pass: the premium column's glow (the premium track
+   is premium) and the foil shimmer on identical-but-shinier rewards (shininess
+   estimated; estimates are mood-dependent). */
+@keyframes premiumGlow {
+  0%, 100% { box-shadow: 0 0 5px 1px rgba(255, 213, 74, 0.3); }
+  50% { box-shadow: 0 0 18px 5px rgba(255, 213, 74, 0.75); }
+}
+@keyframes foilShimmer {
+  0% { background-position: -220% 0; }
+  100% { background-position: 220% 0; }
+}
 
 /* Tab on the "PROVABLY FAIR" badge (style-before in the original artifact) */
 .fair-badge {

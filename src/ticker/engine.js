@@ -88,6 +88,12 @@ export const JUNK_TEMPLATES = [
   "{n}'s dream was REMIXED for the 4th time (novelty: est.)",
   "THE UNDREAMED remains undreamed ({n} was 1 slot away (the slot didn't move))",
   "{n} received their First Dream™ free (subsequent dreams priced normally)",
+  // #46 Mom's Little Helper™ Pass (spec §7 — ambient pool additions, verbatim):
+  // the ladder climbs, the helper is proud (est.), and the season never ends.
+  "{n} reached GOLD MOM (the queue position is 847 of 847 (priority confirmed))",
+  "{n} completed 'Ask Mom (once is enough)' (the helper is proud (est.))",
+  "{n} is 20 XP from DIAMOND MOM (there is nothing after this)",
+  "Season 1 ends in 29d 23h (lunar)",
 ];
 
 // House/cast lines (§2 tier 8%). Cast entries render with badge + cast color.

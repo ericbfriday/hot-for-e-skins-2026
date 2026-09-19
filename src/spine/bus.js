@@ -35,6 +35,12 @@ export const EVENTS = {
   // settled fact. The one sanctioned bus emit from chat (the ruling mints it);
   // consumers: pass (#44 seasonal quest), StatTrak (winsDeleted, later ticket).
   MOD_DELETED: "mod.deleted",
+  // #46 Mom's Little Helper™ Pass (integration-2026 §2): tier-ups ride the bus
+  // (consumers: ticker's tier line, chat's MOD congrats). coupon.redeemed is
+  // minted per the mod.deleted precedent — a redemption is a settled fact; the
+  // pass hears it, the Generous gate is checked at the owning surface.
+  PASS_MILESTONE: "pass.milestone",
+  COUPON_REDEEMED: "coupon.redeemed",
 };
 
 const listeners = new Map();

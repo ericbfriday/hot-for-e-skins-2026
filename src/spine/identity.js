@@ -175,6 +175,11 @@ function blankStats() {
     // views/tips/verifies counters); the milestone leak at 50 rides MILESTONES
     // + chat's once-per-identity flags.
     chainChecks: 0,
+    // #46 the Pass (integration-2026 §10.6: "pass fields (xp, tier)"): the
+    // hfes_pass ledger is the truth; these are the StatTrak™ Lifetime mirrors
+    // (max-only writes from the pass). passTier is the ladder index (0–4).
+    passXp: 0,
+    passTier: 0,
   };
 }
 function sanitizeStats(v) {
@@ -205,6 +210,8 @@ function sanitizeStats(v) {
   base.trolleyFundBB = r2(num(v.trolleyFundBB));
   base.aiAnalyses = Math.floor(num(v.aiAnalyses)); // #43
   base.chainChecks = Math.floor(num(v.chainChecks)); // #44
+  base.passXp = Math.floor(num(v.passXp)); // #46
+  base.passTier = Math.floor(num(v.passTier)); // #46
   return base;
 }
 function loadKey(key, sanitize) {
