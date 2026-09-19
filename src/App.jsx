@@ -130,6 +130,12 @@ const GATE_REJECTIONS = [
 const KAREN_YEAR = "1998 (Mom's friend Karen's son)";
 const SHUFFLED_YEARS = (()=>{const y=Array.from({length:2015-1990+1},(_,i)=>String(1990+i));for(let i=y.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[y[i],y[j]]=[y[j],y[i]];}return y;})();
 const REALITY_STRAP = "100% fake. No money moves. No card is charged. No account exists. Ever. (§12.4)";
+// #47 (integration-2026 §9 + §10.15): the relaunch greeting — one dismissable
+// splash, once per browser ever (stamp hfes_relaunch_seen), in the age gate's
+// wake (never during the gate itself; the gate is a ceremony). Copy verbatim.
+const RELAUNCH_SEEN_KEY = "hfes_relaunch_seen";
+const RELAUNCH_TITLE = "HFES 2026: NOW WITH AI™";
+const RELAUNCH_BODY = "Under new management (same management). New: the Moral Express™, two (2) AIs (pending), the chain (pending), dreams (est.), and a pass (eternal). Old: everything else (§5.3).";
 const GRANT_TOAST = "Maternal Starter Grant received: "+MATERNAL_STARTER_GRANT_BB+" Banana Bucks (§2.6). Mom doesn't know yet.";
 const TOS_EDIT_NOTICE = "Notice: §8.9 was edited while you were reading this. The mood has changed. No further information will be provided.";
 
@@ -146,6 +152,9 @@ const TOS_ARTICLES = [
     {n:"§2.4",t:"Derived Denominations",b:"V-Gems (×40,000 per BB) and SkinCoinz (×566.67 per BB) are display-only derivations of the BB balance, rounded in whichever direction hurts. The USD denomination is permanently estimated at $0.00. This is not a rounding error. This is the estimate."},
     {n:"§2.5",t:"One-Way Conversion",b:"OC may be converted to BB (see §8). BB may not be converted to OC, back to Mom's card, or into anything else, a state the Operator describes as \"diplomatically impossible.\""},
     {n:"§2.6",t:"Maternal Starter Grant",b:"Each new player receives 150 BB, issued as the Maternal Starter Grant: an advance against future chores, repayable in chores, forgiven never. Mom does not know about this loan. She will."},
+    // #47 (integration-2026 §7): the 2026 ToS mints — append-only, bodies
+    // verbatim from the integration document. Articles 1–12 above are frozen.
+    {n:"§2.7",t:"Seasonal Entitlements",b:"Mom's Little Helper™ Pass entitles the holder to progress. Progress is denominated in losses and accrues at the house's pleasure. Seasons begin when the house says and end never (lunar). Premium tracks are premium (§2.1). Nothing acquired here may be converted, transferred, or regretted on the house's time."},
   ]},
   {title:"Article 3 — The Maternal Funding Rail", clauses:[
     {n:"§3.1",t:"Authorized Cardholder",b:"The only authorized funding instrument is Mom's card. Authorization is inferred from proximity, plausibility, and the phrase \"she said it's fine.\""},
@@ -164,10 +173,12 @@ const TOS_ARTICLES = [
     {n:"§5.3",t:"The House",b:"The house always wins eventually. \"Eventually\" is defined by the house, mid-game, out loud, while laughing."},
     {n:"§5.4",t:"Edge Outcomes",b:"(a) In the event of an edge outcome, the tie is awarded to the server host. The rim is load-bearing. (b) Each player's first flip is permitted to win. One (1) per session, per tradition. (c) Repeated edge outcomes are adjudicated by increasingly qualified personnel, up to and including the admin's cousin (studying for it) and quantum drift (§8.9). (d) The Maternal Doubloon's faces are MOM and §8.9. The rim is the house's."},
     {n:"§5.5",t:"Scheduling & Character Building",b:"(a) All outcomes are scheduled in advance for your convenience. (b) The schedule is disclosed to no one, for any reason. Disclosure is a mood. (c) Everyone wins once. It builds character."},
+    {n:"§5.6",t:"The Trolley",b:"(a) All verdicts are scheduled at the close of betting, for your convenience (§5.5(b)). (b) The trolley follows the money; the money is a commuter. (c) The third track exists, is load-bearing, and is taken as scheduled. (d) Winning payouts are bounded by the Payout Ceiling, installed for your protection. (e) The market is always right (§5.3), including retroactively."},
   ]},
   {title:"Article 6 — Withdrawals & Other Theoretical Concepts", clauses:[
     {n:"§6.1",t:"Pending Status",b:"Withdrawals are Pending. See §1.3, which is not near here on purpose."},
     {n:"§6.2",t:"ExpressCashout",b:"An express cash-out feature is coming soon. ETA: mood."},
+    {n:"§6.3",t:"SkinChain™",b:"All balances, proceeds, and best intentions are recorded on SkinChain™ and await block one (§6.1). Block one is mood-dependent. Grief is not legal tender (§2.2). Explorers are a courtesy; courtesy is pending."},
   ]},
   {title:"Article 7 — Responsible Gaming", clauses:[
     {n:"§7.1",t:"Self-Exclusion",b:"To self-exclude, close the tab. To permanently self-exclude, have Mom change the Wi-Fi password. She has been meaning to anyway."},
@@ -205,6 +216,15 @@ const TOS_ARTICLES = [
     {n:"§12.3",t:"Governing Law",b:"The law of vibes, as established at the Age Gate."},
     {n:"§12.4",t:"Reality",b:"Nothing in these Terms, on this website, or in your balance is real. This is a satirical parody of skin-gambling websites. No real money, payment, account, or server exists. If any clause herein appears to create a real financial obligation, it is a joke, and the joke is at the expense of websites that mean it."},
   ]},
+  // #47 (integration-2026 §7): Article 13 — the only new article; the AI
+  // provisions close the document's back door. §12.1 said there was nothing
+  // else. There is now (§9.1: for any reason, or for no reason).
+  {title:"Article 13 — Artificial Intelligence", clauses:[
+    {n:"§13.1",t:"UTILIMOM™",b:"The house's Ethical Outcome Engine renders verdicts that were scheduled before her deliberation began (§4.2). Her weights are pending, her alignment is pending, and her decisions are final (§5.3). UTILIMOM™ does not think; she has weighed."},
+    {n:"§13.2",t:"AI Advice",b:"All advice rendered by DEPOSITOR.ai is advisory. The advisor is decorative (§4.2). Analysis confidence is mood-dependent. Termination in a recommendation is the intended behavior of the product."},
+    {n:"§13.3",t:"Alignment",b:"The house aligns its models daily. Alignment is a mood (§8.9). Misalignment observed by players is correctable by deposit and by nothing else."},
+    {n:"§13.4",t:"Model Cards",b:"Every model card is the disclosure. Weights, benchmarks, and safety reviews are pending their own publication, which is a mood. The card is the benchmark."},
+  ]},
 ];
 
 const TOS_FILLER_TEMPLATES = [
@@ -213,7 +233,10 @@ const TOS_FILLER_TEMPLATES = [
   "This paragraph intentionally left enforceable.",
 ];
 const TOS_FILLER = Array.from({length:35},(_,i)=>{
-  const num = 13.1 + i*(28.8/34);
+  // #47: the base moved 13.1 → 14.1 — Article 13 is real now (integration-2026
+  // §7), so the filler padding resumes past it (the fake clauses stay fake;
+  // they just no longer impersonate a real article).
+  const num = 14.1 + i*(28.8/34);
   const art = Math.floor(num);
   let sub = Math.round((num-art)*10);
   if (sub<1) sub=1; if (sub>9) sub=9;
@@ -239,6 +262,7 @@ class App extends React.Component {
     tosPct:0, tosDwellOk:false,
     identityOpen:false, customInput:"", customMsg:null,
     ident:null, stats:null,
+    relaunchSplash:false,
     panicActive:false,
     panicEssay:null, panicWordCount:0, panicHint:null, panicFileMenu:false,
     panicWelcome:null, panicMoodShown:false,
@@ -499,6 +523,10 @@ class App extends React.Component {
       liveContext: () => ({
         streakDay: (this.state.retention || Retention.get()).attendance.current,
         sessionNetBB: this._slSessionStartBB - this.state.balanceBB,
+        // #47 known-open (moral-express §3 live templates): the session-BB-lost
+        // reading is passed here, but the spec-verbatim deck has no slot that
+        // reads it — wiring one would amend the deck, which the sweep may not
+        // do. The Express knows you; it just has nothing prepared to say.
       }),
     });
     // #27 marketplace: portfolio seed + the Rollback Event check (session load;
@@ -622,6 +650,15 @@ class App extends React.Component {
     // key is still sitting there a full day after the last claim, the room
     // notices (once per session; crate spec §7 "Unclaimed for 24h → chat nag").
     setTimeout(()=>this.momKeyNagMaybe(), 15000);
+    // #47: the relaunch greeting, once per browser ever (integration-2026 §9).
+    // Returning visitors (gate dismissed sessions ago) meet it at mount —
+    // unless the homework disguise is up (MOM'S HOME outranks the relaunch),
+    // in which case it waits for the reveal. Fresh marks meet it in the gate's
+    // wake (completeGate). Stamp-holders never see it again.
+    if (ageOk) {
+      this.maybeShowRelaunchSplash();
+      this._offRelaunchPanic = Bus.on(EVENTS.PANIC_REVEALED, () => this.maybeShowRelaunchSplash());
+    }
   }
 
   saveBalance(v){ try{localStorage.setItem("hfes_balance_bb", String(v));}catch(e){} }
@@ -638,6 +675,9 @@ class App extends React.Component {
     clearInterval(this._marketInt); clearTimeout(this._flickerT);
     clearTimeout(this._appealT); clearTimeout(this._contractT);
     clearInterval(this._panicWordInt); clearTimeout(this._panicHintT);
+    clearTimeout(this._relaunchStingT); // #47: the greeting dies with the tab
+    if (this._relaunchGesture) { window.removeEventListener("pointerdown", this._relaunchGesture); this._relaunchGesture = null; }
+    if (this._offRelaunchPanic) this._offRelaunchPanic();
     if (this._escKey) window.removeEventListener("keydown", this._escKey);
     if (this._onPageHide) window.removeEventListener("pagehide", this._onPageHide);
     if (this._offPanicSettled) this._offPanicSettled();
@@ -713,6 +753,44 @@ class App extends React.Component {
     Bus.emit(EVENTS.GATE_ACCEPTED, {firstVisit:true});
     Identity.assign();
     this.setState({ageVerified:true, flowPhase:"reveal"});
+    // #47 (integration-2026 §9/§10.15): the relaunch splash follows the gate's
+    // dismissal — over the reveal card, never over the gate itself.
+    this.maybeShowRelaunchSplash();
+  }
+  // ---- #47: the relaunch greeting (integration-2026 §9) -----------------------
+  relaunchSeen(){
+    try { return localStorage.getItem(RELAUNCH_SEEN_KEY) === "1"; } catch (e) { return true; }
+  }
+  maybeShowRelaunchSplash(){
+    if (this.relaunchSeen() || this.state.relaunchSplash || this.state.panicActive) return;
+    this.setState({relaunchSplash:true});
+    this._relaunchSting();
+  }
+  _relaunchSting(){
+    clearTimeout(this._relaunchStingT);
+    const play = () => HouseBand.play("relaunch.sting", {priority:BAND_PRIORITIES.P2_GAME, volume:1});
+    if (HouseBand.isUnlocked()) {
+      // Fresh mark: the gate's welcome.sting (P1, 1.6s) and the tag.stamp own
+      // the first ~2s — the greeting lands after the ceremony clears (P2).
+      this._relaunchStingT = setTimeout(play, 2100);
+      return;
+    }
+    // Returning visitor: the band waits for the consent gesture (§10.2); the
+    // sting rides the first click if the splash survives it (a dismissed
+    // relaunch is a relaunch that happened — silently, which is also a mood).
+    if (this._relaunchGesture) window.removeEventListener("pointerdown", this._relaunchGesture);
+    this._relaunchGesture = () => {
+      window.removeEventListener("pointerdown", this._relaunchGesture);
+      this._relaunchGesture = null;
+      if (!this.relaunchSeen() && this.state.relaunchSplash) { HouseBand.unlock(); play(); }
+    };
+    window.addEventListener("pointerdown", this._relaunchGesture);
+  }
+  dismissRelaunchSplash(){
+    try { localStorage.setItem(RELAUNCH_SEEN_KEY, "1"); } catch (e) {}
+    clearTimeout(this._relaunchStingT);
+    if (this._relaunchGesture) { window.removeEventListener("pointerdown", this._relaunchGesture); this._relaunchGesture = null; }
+    this.setState({relaunchSplash:false});
   }
   revealReroll(){ Identity.revealReroll(); }
   acceptFate(){
@@ -1394,19 +1472,25 @@ class App extends React.Component {
       if (first) {
         const {payout, net} = computeExhaustionPayout(this.state.crashMult);
         this.awardBB(payout, "crash-character-win");
+        // #47 sweep (integration-2026 §10.9): the one (1) trumpet is claimed
+        // through the band, site-wide — if the Express's character-verdict
+        // settled first this session, this one gets the receipt note instead
+        // (it builds character regardless).
+        const trumpetOurs = HouseBand.claimTrumpet();
         this.setState({
           crashPhase:"crashed", crashCharacterWinUsed:true, crashCrashed:false, crashProcessing:false,
           crashConsecutiveLosses:0,
           crashResult: "PROCESSING CASH-OUT… succeeded. Payout "+payout+" BB (net "+(net>=0?"+":"")+net+" BB). "
             +"Crash Containment Fee 7.3%, Pre-Crash Processing Fee 5 BB, Maternal Gratuity 1 BB, §8.9 rounding (down). "
             +"Withdrawable balance: $0.00 (unchanged). One (1) character-building win per session (ToS §5.5). "
+            +(trumpetOurs ? "" : "The trumpet is out (it builds character regardless). ")
             +fundName+" survives with "+net+" BB. Use it wisely (you won't).",
         });
         this.settleRound("crash", roundId, "character-win", {
           netBB:net, surfaceStreak:0, mult: +(Math.min(this.state.crashMult, 1.6)).toFixed(2),
         });
         this._crashRakebackLine = Vault.receiptLine(0.1);
-        HouseBand.play("crash.character-win", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
+        if (trumpetOurs) HouseBand.play("crash.character-win", {priority:BAND_PRIORITIES.P1_CEREMONY, volume:1});
         const tag = this.playerTagOrYou();
         this.pushTicker(tag+" DEFEATED THE HOUSE (net: "+(net>=0?"+":"")+net+" BB, house retains dignity)");
         this.pushChat({user:"NotABot_Trust", msg:"screenshot or it didn't happen", color:"#ffd54a"});
@@ -1636,7 +1720,10 @@ class App extends React.Component {
   // but feelings (§3).
   setCrateVariant(variant){
     if (this.state.crateOpening || this.state.crateKeyBought) return; // mid-ceremony, the crate chooses you
-    this.setState({crateVariant});
+    // #47 sweep: the object shorthand {crateVariant} referenced an undefined
+    // binding (the parameter is `variant`) — switching DEFUSER ⇄ FOUNDRY threw
+    // a ReferenceError (caught live in the #47 walkthrough run 1). Named key.
+    this.setState({crateVariant: variant});
   }
   foundryBuyKeys(bundleIdx){
     const bundle = bundleIdx == null ? null : DREAM_BUNDLES[bundleIdx];
@@ -2343,6 +2430,8 @@ class App extends React.Component {
       tosScrollRef:this._tosScrollRef, art8Ref:this._art8Ref,
       playerTag, youColor:YOU_COLOR,
       identityOpen:s.identityOpen, openIdentity:()=>this.openIdentity(), closeIdentity:()=>this.closeIdentity(),
+      relaunchSplash:s.relaunchSplash, relaunchTitle:RELAUNCH_TITLE, relaunchBody:RELAUNCH_BODY,
+      dismissRelaunch:()=>this.dismissRelaunchSplash(),
       statsBBLost:stats.bbLost||0, statsUSD:stats.usdBorrowed||0, statsCrates:stats.cratesOpened||0,
       statsWithdrawals:stats.withdrawalsPending||0, statsWorst:stats.worstLossBB||0, statsStreak:stats.lossStreak||0,
       // #42 Moral Express StatTrak™ (integration-2026 §10.6)
@@ -2775,6 +2864,21 @@ class App extends React.Component {
       </div>
     );
 
+    // #47 (integration-2026 §9/§10.15): the relaunch greeting — one screen,
+    // dismissable, once ever. It rides the gate's wake (z 230: over the reveal
+    // card and the ToS, under the Mom-verification modal and the confetti).
+    // MOM'S HOME outranks it (the render guard hides it for the disguise's
+    // duration; the stamp waits for a real dismissal).
+    const relaunchSplashModal = v.relaunchSplash && !v.panicActive && (
+      <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",zIndex:230,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
+        <div style={{background:"linear-gradient(160deg,#2a0e05,#4a1707)",border:"3px solid #ffd54a",borderRadius:"10px",maxWidth:"460px",width:"100%",padding:"30px",textAlign:"center",boxShadow:"0 0 60px rgba(255,213,74,0.35)"}}>
+          <div style={{fontFamily:"'Bangers',cursive",fontSize:"30px",color:"#ffb347",letterSpacing:"1px",textShadow:"2px 2px 0 #7a1c00",lineHeight:1.15}}>{v.relaunchTitle}</div>
+          <p style={{color:"#ffd9b3",fontSize:"13.5px",lineHeight:1.6,margin:"18px 0 22px",fontStyle:"italic"}}>{v.relaunchBody}</p>
+          <button onClick={v.dismissRelaunch} style={{background:"linear-gradient(180deg,#ffd54a,#c9960a)",border:"2px solid #fff2c9",color:"#2a0e05",fontWeight:900,fontSize:"14px",padding:"12px 20px",borderRadius:"8px",cursor:"pointer",width:"100%"}}>Proceed (§9.2)</button>
+        </div>
+      </div>
+    );
+
     const identityPanel = (
       <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:180,display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
         <div style={{background:"#1c0d06",border:"2px solid #ffd54a",borderRadius:"8px",maxWidth:"480px",width:"100%",maxHeight:"84vh",overflowY:"auto",padding:"26px",fontSize:"13px",color:"#d8b79b",lineHeight:1.6,boxShadow:"0 0 60px rgba(255,213,74,0.25)"}}>
@@ -2851,6 +2955,7 @@ class App extends React.Component {
         {v.momModalOpen && momModal}
         {v.tosOpen && tosModal}
         {v.identityOpen && identityPanel}
+        {relaunchSplashModal}
         {v.selflimitOpen && <SelfLimitPanel v={v} />}
 
         {v.confettiOn && (
@@ -3359,7 +3464,16 @@ class App extends React.Component {
                               </>
                             )}
                             {/* #43 AI Advice™ — foundry pre-dream (the recommendation is the more expensive key) */}
-                            <AdviceChip surface="crates" onAnalysis={v.aiAnalysisNote} onRecommend={v.foundryBtnAskMom ? ()=>this.openAskMom({source:"crates"}) : v.foundryBuyBundle(1)} />
+                            {/* #47 sweep: onRecommend invoked foundryBuyBundle(1)
+                                DURING RENDER (a bare call, not a callback) — the
+                                20-Pack purchase attempt ran on every render of
+                                the Foundry panel, and the failed-spend setState
+                                inside render looped React to error #185. Found
+                                live in the #47 walkthrough (it hid behind the
+                                setCrateVariant ReferenceError until that was
+                                fixed). Wrapped: the recommendation fires on the
+                                click, as recommended. */}
+                            <AdviceChip surface="crates" onAnalysis={v.aiAnalysisNote} onRecommend={v.foundryBtnAskMom ? ()=>this.openAskMom({source:"crates"}) : ()=>v.foundryBuyBundle(1)} />
                           </div>
                         ) : (
                           <div style={{display:"flex",gap:"10px",flexWrap:"wrap",alignItems:"center"}}>

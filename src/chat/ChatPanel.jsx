@@ -570,6 +570,14 @@ export default function ChatPanel({ panicActive = false, hooks = {}, gameFeed = 
         // #44 (skinchain §5): the chain-checks leak, same once-per-identity
         // list — verbatim (it did not move).
         addTimer(() => pushAmbientLine(tag + " has checked the chain 50 times (it did not move)"), 500);
+      } else if (p.field === "trolleyBets" && p.value === 10 && markFlag("milestone:" + key)) {
+        // #47 sweep (integration-2026 §10.6, closing #42's open item): the
+        // Express's leaks join the same list — the room notices the regulars.
+        addTimer(() => pushAmbientLine(tag + " has bet on 10 deliberations (the ethics were never free)"), 500);
+      } else if (p.field === "trolleyThirdTracks" && p.value === 3 && markFlag("milestone:" + key)) {
+        addTimer(() => pushAmbientLine(tag + " has survived 3 Third Tracks (the Fund thanks them)"), 500);
+      } else if (p.field === "trolleyFundBB" && p.value === 100 && markFlag("milestone:" + key)) {
+        addTimer(() => pushAmbientLine(tag + " has fed the Utilitarian Fund 100 BB of best intentions (est. $0.00)"), 500);
       }
     }));
 

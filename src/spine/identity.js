@@ -54,6 +54,14 @@ const MILESTONES = {
   // same once-per-identity trigger list — "{tag} has checked the chain 50
   // times (it did not move)".
   chainChecks: [50],
+  // #47 sweep (integration-2026 §10.6, closing #42's open item): the trolley's
+  // four StatTrak™ fields get their milestone leaks — bets at 10 (the
+  // cratesOpened:10 precedent), Third Tracks survived at 3, Fund BB at 100
+  // (the bbLost:100 precedent). Verdicts-correct stays unlisted: the room
+  // never congratulates correctness (§5.3 — the house investigates it).
+  trolleyBets: [10],
+  trolleyThirdTracks: [3],
+  trolleyFundBB: [100],
 };
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -376,8 +384,11 @@ Bus.on(EVENTS.DEPOSIT_COMPLETED, (p) => {
 // (§10.7); the round.settled listener above already carries the wagered bets'
 // streaks/loss totals (kinds verdict-win|verdict-loss|third-track|
 // character-verdict — the win kinds reset the streak, integration-2026 §3).
+// #47: the bumps ride commitStats (not bare saveAll) so the milestone leaks
+// fire on the crossings (the once-per-identity flags live in chat).
 Bus.on(EVENTS.DILEMMA_SETTLED, (p) => {
   if (!p || p.wagered !== true) return;
+  const before = { ...stats };
   stats.trolleyBets += 1;
   if (typeof p.playerNetBB === "number" && Number.isFinite(p.playerNetBB) && p.playerNetBB > 0) stats.trolleyCorrect += 1;
   if (p.verdict === "third-track") {
@@ -385,5 +396,5 @@ Bus.on(EVENTS.DILEMMA_SETTLED, (p) => {
     const stake = typeof p.playerStakeBB === "number" && Number.isFinite(p.playerStakeBB) && p.playerStakeBB > 0 ? p.playerStakeBB : 0;
     stats.trolleyFundBB = r2(stats.trolleyFundBB + stake);
   }
-  saveAll();
+  commitStats(before);
 });

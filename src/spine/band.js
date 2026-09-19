@@ -59,6 +59,13 @@ const activeByPriority = { 1: 0, 2: 0, 3: 0 };
 let crateTick = null;      // managed defusal tick loop (P2 voices)
 let murmur = null;         // Desperation crowd-murmur layer (§5)
 let sprinkleTimer = null;  // Generous-flood demo-siren sprinkles (§5)
+// #47 sweep (integration-2026 §10.9): the one (1) trumpet is site-wide, once
+// per session — crash's character win and the trolley's character-verdict
+// share it, first to settle owns it. The claim lives here (the audio canon's
+// home): both surfaces ask the band, and the later one gets the receipt note.
+// In-memory on purpose — the session is the page; killAll() never refunds it
+// (a missed trumpet is not backlogged; nothing is).
+let trumpetClaimed = false;
 
 function log(id, priority) {
   playedLog.unshift({ id, priority, at: Date.now() });
@@ -321,6 +328,16 @@ const CUES = {
     fanfareChords(t, v * 1.2);
     confettiPops(t + 0.5, 6, v);
     noise(ctx, layers[1], { t, gain: 0.03 * v, attack: 0.8, decay: 0.7, bp: 5200, q: 1.2 });
+  } },
+  // #47 relaunch greeting (integration-2026 §9): one brief celebratory sting —
+  // the harp-gliss family's little sibling, played at P2 (a greeting, not a
+  // ceremony). Four ascending plucks, one soft chord underneath, three pops.
+  // It plays once per browser, ever; the relaunch is a mood, and moods happen
+  // once (the stamp hfes_relaunch_seen is the splash's, the band's is the call).
+  "relaunch.sting": { dur: 1.2, make(t, v) {
+    [523, 659, 784, 1047].forEach((f, i) => pluck(ctx, layers[2], { t: t + i * 0.09, freq: f, gain: 0.05 * v, dur: 0.55 }));
+    tone(ctx, layers[2], { t: t + 0.34, f0: 523, gain: 0.03 * v, attack: 0.04, hold: 0.22, decay: 0.35, lp: 2600 });
+    confettiPops(t + 0.42, 3, v * 0.8);
   } },
   "tag.stamp": { dur: 0.4, make(t, v) { // one rubber-stamp thunk
     click(ctx, layers[3], { t, f0: 900, gain: 0.09 * v });
@@ -650,6 +667,14 @@ function playCue(id, priority, volume = 1) {
 
 // ---- the public House Band ------------------------------------------------------
 export const HouseBand = {
+  // The one (1) trumpet (§10.9): claim it once per session, site-wide. Returns
+  // true for the first claimant (the caller plays "crash.character-win"); every
+  // later claimant gets false and renders its own receipt note.
+  claimTrumpet() {
+    if (trumpetClaimed) return false;
+    trumpetClaimed = true;
+    return true;
+  },
   play(id, opts = {}) {
     if (killed) return false;
     const priority = opts.priority ?? BAND_PRIORITIES.P3_SOCIAL;
