@@ -357,6 +357,12 @@ export function playerLineForSettled(p, tag) {
   if (!p || p.wagered === false) return null;
   const price = Number.isFinite(p.priceBB) ? p.priceBB : 0;
   const item = p.itemAward || null;
+  // #47 sweep: awards ride as objects ({id,name,tier,value} — crates pass the
+  // full award, the Foundry the dream), while roulette/coinflip still pass the
+  // bare junk-item name. Normalize once: the line reads the NAME, never the
+  // award object (the pre-existing "unboxed [object Object]" bug, flagged by
+  // #45; dreamed lines already read itemAward.name — now everyone does).
+  const itemName = item && typeof item === "object" ? (item.name || null) : (item || null);
   const near = p.nearMissItem || null;
   const you = { isYou: true, name: tag, color: YOU_COLOR };
   const bot = { isYou: false, name: "AdminTradeBot_69", badge: "[BOT]", color: CAST["AdminTradeBot_69"].color };
@@ -364,14 +370,14 @@ export function playerLineForSettled(p, tag) {
   switch (p.surface) {
     case "roulette":
       if (p.kind === "near-miss") return { ...you, text: "was 1 slot off the " + (near || "jackpot item") + " (so close, by design)" };
-      if (p.kind === "junk-win") return { ...you, text: "won a " + (item || "junk item") + " (withdrawal pending)", flourish: true, accent: rarityFor(item, p.kind) };
-      if (p.kind === "jackpot") return { ...you, text: "WON the " + (item || "jackpot item") + "! Withdrawal: pending (§1.3)", flourish: true, accent: rarityFor(item, p.kind) };
+      if (p.kind === "junk-win") return { ...you, text: "won a " + (itemName || "junk item") + " (withdrawal pending)", flourish: true, accent: rarityFor(itemName, p.kind) };
+      if (p.kind === "jackpot") return { ...you, text: "WON the " + (itemName || "jackpot item") + "! Withdrawal: pending (§1.3)", flourish: true, accent: rarityFor(itemName, p.kind) };
       if (p.kind === "nibble") return { ...you, text: "received 2 BB Rakeback (net: still down) (est.)" };
       return { ...you, text: "lost " + price + " BB to the house (shocking) (as scheduled)" };
     case "coinflip":
       if (p.kind === "edge") return { ...bot, text: "collects the edge-case bounty from " + tag + " (rim certified, §5.4)" };
       if (p.kind === "photo-finish") return { ...you, text: "had a win overturned by one (1) degree. Referee: the house" };
-      if (p.kind === "junk-win" || p.kind === "legendary-win") return { ...you, text: "won " + (item || "an item") + " off AdminTradeBot_69 (withdrawal pending, §1.3)", flourish: true, accent: rarityFor(item, p.kind) };
+      if (p.kind === "junk-win" || p.kind === "legendary-win") return { ...you, text: "won " + (itemName || "an item") + " off AdminTradeBot_69 (withdrawal pending, §1.3)", flourish: true, accent: rarityFor(itemName, p.kind) };
       if (p.kind === "nibble") return { ...you, text: "broke even. A crowd gathered." };
       return { ...bot, text: "takes " + tag + " to school. Tie goes to the server host." };
     case "crash":
@@ -390,14 +396,14 @@ export function playerLineForSettled(p, tag) {
       // #45: dreamed settles (integration-2026 §2 — key-defused + dreamed:true)
       // render in the Foundry's voice: dreamed, derivative, provably.
       if (p.dreamed) {
-        const nm = item && item.name ? item.name : "a dream";
+        const nm = itemName || "a dream";
         if (p.kind === "junk-win" || p.kind === "jackpot" || p.kind === "legendary-win") {
-          return { ...you, text: "dreamed " + nm + " (originality: est. pending)", flourish: true, accent: rarityFor(item, p.kind) };
+          return { ...you, text: "dreamed " + nm + " (originality: est. pending)", flourish: true, accent: rarityFor(nm, p.kind) };
         }
         return { ...you, text: "dreamed " + nm + " (derivative of everything, provably)" };
       }
       if (p.kind === "junk-win" || p.kind === "jackpot" || p.kind === "legendary-win") {
-        return { ...you, text: "unboxed " + (item || "something") + " (withdrawal pending)", flourish: true, accent: rarityFor(item, p.kind) };
+        return { ...you, text: "unboxed " + (itemName || "something") + " (withdrawal pending)", flourish: true, accent: rarityFor(itemName, p.kind) };
       }
       return { ...you, text: "defused a crate. A JPEG was awarded. Nobody won. (est.)" };
     case "trolley":

@@ -70,7 +70,6 @@ let deliberation = { beat: "", tokens: 0, alignment: 0 };
 let thirdTrackSightings = 0;
 let rushHour = false;
 let nextDilemmaAt = 0;
-let trumpetTaken = false;   // the one (1) trumpet is site-wide, first-to-settle owns it (§10.9)
 let tickTimer = null;
 let wired = false;
 
@@ -281,13 +280,16 @@ function settleDilemma() {
   }
 
   // audio: the verdict sting rides the Band at P3 (integration-2026 §5); the
-  // one (1) trumpet is site-wide — first character win of the session owns it (§3).
+  // one (1) trumpet is site-wide and claimed THROUGH the band (#47 sweep,
+  // §10.9 — first character win of the session to settle owns it; the claim is
+  // the band's, so our own settle above can't pre-claim it and crash can't
+  // double it. The later claimant gets the receipt note).
   let trumpetNote = null;
   const characterBet = settledBets.find((b) => b.kind === "character-verdict");
   if (isThird) HouseBand.play("trolley.third-track", { priority: BAND_PRIORITIES.P3_SOCIAL });
   else HouseBand.play("trolley.verdict", { priority: BAND_PRIORITIES.P3_SOCIAL });
   if (characterBet) {
-    if (!trumpetTaken) { trumpetTaken = true; HouseBand.play("crash.character-win", { priority: BAND_PRIORITIES.P1_CEREMONY }); }
+    if (HouseBand.claimTrumpet()) HouseBand.play("crash.character-win", { priority: BAND_PRIORITIES.P1_CEREMONY });
     else trumpetNote = E.COPY.trumpetOut;
   }
 
@@ -373,7 +375,6 @@ export const TrolleyCtl = {
     conviction = loadConviction();
     started = true;
     hidden = false;
-    trumpetTaken = false;
     rushHour = false;
     phase = "idle";
     dilemmaNumber = 0;
@@ -477,10 +478,4 @@ function wireBus() {
   // hidden (in-flight canon) with the receipt waiting. Conviction survives.
   Bus.on(EVENTS.PANIC_HIDDEN, () => { hidden = true; notify(); });
   Bus.on(EVENTS.PANIC_REVEALED, () => { hidden = false; notify(); });
-
-  // The one (1) trumpet is shared site-wide (§10.9): first character win of the
-  // session to settle owns it — crash's or ours.
-  Bus.on(EVENTS.ROUND_SETTLED, (p) => {
-    if (p && (p.kind === "character-win" || p.kind === "character-verdict")) trumpetTaken = true;
-  });
 }
